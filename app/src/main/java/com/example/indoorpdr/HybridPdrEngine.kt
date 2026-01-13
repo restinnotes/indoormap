@@ -53,9 +53,21 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
     private var scsHeadingRad: Float? = null
     private var lastScsUpdateTime = 0L
 
-    // HDR
+    // HDR - Enhanced with 45° diagonal support
     var useHdr = true
-    private val HDR_TOLERANCE_RAD = 0.30f // ~17 degrees
+    private val HDR_TOLERANCE_RAD = 0.26f // ~15 degrees
+
+    // Direction Lock - reduces jitter when walking consistently
+    private var lockedHeadingRad: Float? = null
+    private var consecutiveDirectionCount = 0
+    private val DIRECTION_LOCK_THRESHOLD = 3  // Lock after 3 consistent steps
+    private val DIRECTION_UNLOCK_TOLERANCE = 0.52f // ~30 degrees to unlock
+
+    // Step Length Smoothing
+    private val stepLengthHistory = mutableListOf<Double>()
+    private val MAX_STEP_LENGTH = 0.75
+    private val MIN_STEP_LENGTH = 0.55
+    private val STEP_HISTORY_SIZE = 5
 
     // Constants
     private val EARTH_RADIUS = 6378137.0
@@ -68,6 +80,11 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
         currentLat = startPoint.latitude
         currentLng = startPoint.longitude
         stepCount = 0
+
+        // Reset enhanced PDR state
+        lockedHeadingRad = null
+        consecutiveDirectionCount = 0
+        stepLengthHistory.clear()
 
         val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         val rotation = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
@@ -131,9 +148,10 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
                 lastStepTime = now
                 stepCount++
 
-                // Weinberg Step Length
+                // Weinberg Step Length with smoothing
                 val accelRange = (currentStepMaxAccel - currentStepMinAccel).coerceAtLeast(1.0)
-                val stepLength = WEINBERG_K * Math.pow(accelRange, 0.25)
+                val rawStepLength = WEINBERG_K * Math.pow(accelRange, 0.25)
+                val stepLength = smoothStepLength(rawStepLength)
 
                 // Reset for next step
                 currentStepMaxAccel = 0.0
@@ -153,8 +171,9 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
                     headingSource = "Phone"
                 }
 
-                // Apply HDR if enabled
-                val finalHeadingRad = if (useHdr) snapToGrid(rawHeadingRad) else rawHeadingRad
+                // Apply HDR if enabled, then direction lock
+                val snappedHeading = if (useHdr) snapToGrid(rawHeadingRad) else rawHeadingRad
+                val finalHeadingRad = applyDirectionLock(snappedHeading)
 
                 updateLocation(stepLength, finalHeadingRad.toDouble(), headingSource)
             }
@@ -164,12 +183,55 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
         }
     }
 
+    /**
+     * Enhanced HDR: Snap to 45° grid (supports diagonal directions)
+     */
     private fun snapToGrid(roughRad: Float): Float {
-        val step = Math.PI / 2.0
+        val step = Math.PI / 4.0  // 45 degrees instead of 90
         val multiple = Math.round(roughRad / step)
         val snapped = multiple * step
         val diff = Math.abs(roughRad - snapped)
         return if (diff < HDR_TOLERANCE_RAD) snapped.toFloat() else roughRad
+    }
+
+    /**
+     * Direction Lock: Maintains heading when walking consistently in one direction
+     */
+    private fun applyDirectionLock(currentHeading: Float): Float {
+        val locked = lockedHeadingRad
+
+        if (locked != null) {
+            // Check if we should maintain lock
+            val diff = Math.abs(currentHeading - locked)
+            if (diff < DIRECTION_UNLOCK_TOLERANCE) {
+                consecutiveDirectionCount++
+                return locked  // Stay locked
+            } else {
+                // Unlock - direction changed significantly
+                lockedHeadingRad = null
+                consecutiveDirectionCount = 1
+                return currentHeading
+            }
+        } else {
+            // No lock yet - check if we should establish one
+            consecutiveDirectionCount++
+            if (consecutiveDirectionCount >= DIRECTION_LOCK_THRESHOLD) {
+                lockedHeadingRad = currentHeading
+            }
+            return currentHeading
+        }
+    }
+
+    /**
+     * Step Length Smoothing: Reduces step length variance
+     */
+    private fun smoothStepLength(raw: Double): Double {
+        val clamped = raw.coerceIn(MIN_STEP_LENGTH, MAX_STEP_LENGTH)
+        stepLengthHistory.add(clamped)
+        if (stepLengthHistory.size > STEP_HISTORY_SIZE) {
+            stepLengthHistory.removeAt(0)
+        }
+        return stepLengthHistory.average()
     }
 
     private fun updateLocation(stepLength: Double, headingRad: Double, source: String) {
