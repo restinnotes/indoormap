@@ -1,0 +1,40 @@
+# print all settings on screen?
+verbose: 0
+
+# Information about the SCS devices to connect. It may be reordered in runtime.
+# IMPORTANT: The MAC address will be byte flipped for communicating with the devices
+devices_info: [ #    mac_addresses        mounting_points     enables
+                # 用户指定的两个设备
+                [ 0x_D7_87_CD_96_54_64,  'right_upper_arm',      0 ] ,  # 96:54:64
+                [ 0x_C4_4D_5E_E3_AD_D7,  'right_forearm'  ,      1 ] ,  # E3:AD:D7
+                [ 0x_CC_BD_32_B8_E4_3C,  'left_upper_arm' ,      0 ] ,
+                [ 0x_C5_CB_B2_54_04_58,  'left_forearm'   ,      0 ] ,
+                [ 0x_C9_92_1A_34_CC_AE,  'right_thigh'    ,      0 ] ,
+                [ 0x_DB_B2_33_47_A8_3F,  'right_lower_leg',      0 ] ,
+                [ 0x_FA_EA_80_17_C7_88,  'left_thigh'     ,      0 ] ,
+                [ 0x_CF_5D_F9_A7_AC_8A,  'left_lower_leg' ,      0 ] ,
+              ]
+
+# grv     : Data received from SCSs as Game Rotation Vector; aka "quaternion" data format
+#           It has sensor ID 131
+# raw_data: SCSs send raw data from accelerometer and gyroscope, "accel_and_gyro" data format.
+#           It has sensor ID 125
+# Refer to the SCS class in _scs.py
+activity_type: 'grv'
+
+# Sampling frequency in Hertz. It is possible to record data in 25Hz or 50Hz.
+frequency: 50
+
+# Name data groups for saving after one of the options below:
+# - enabled_mounting_points
+# - enabled_mac_addresses
+name_saved_data_after: 'enabled_mac_addresses'
+
+# <describe>
+mock_flag: False
+
+# <describe>
+leaf_flag: False
+
+# <describe>
+sensors: [37]
