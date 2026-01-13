@@ -71,10 +71,26 @@ class ScsBleManager(private val context: Context, private val dataCallback: (Scs
             }
         }
 
+        override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            Log.d(TAG, "onDescriptorWrite: uuid=${descriptor.uuid}, status=$status")
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.i(TAG, "Notifications ENABLED successfully!")
+            } else {
+                Log.e(TAG, "Failed to enable notifications! status=$status")
+            }
+        }
+
+        // DEPRECATED API (for older Android)
+        @Deprecated("Deprecated in API 33")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            // Log highly frequent data only if needed using verbose
-            // Log.v(TAG, "onCharacteristicChanged: size=${characteristic.value.size}")
-            parsePacket(characteristic.value)
+            Log.d(TAG, "onCharacteristicChanged (old API): size=${characteristic.value?.size}")
+            characteristic.value?.let { parsePacket(it) }
+        }
+
+        // NEW API for Android 13+ (API 33+)
+        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+            Log.d(TAG, "onCharacteristicChanged (new API): size=${value.size}")
+            parsePacket(value)
         }
     }
 
