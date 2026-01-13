@@ -2,12 +2,13 @@ package com.example.indoorpdr
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothManager
+import android.bluetooth.*
+import android.bluetooth.le.*
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -26,12 +27,20 @@ class IndoorMapActivity : AppCompatActivity() {
         const val TAG = "IndoorMapActivity"
         const val REQUEST_BLE_PERMISSIONS = 1001
         // SCS Sensor MAC Address - Update this to your device!
-        const val SCS_MAC_ADDRESS = "E3:AD:D7:5E:4D:C4" // Example: right_forearm from settings
+        // Format: "XX:XX:XX:XX:XX:XX" (uppercase)
+        const val SCS_MAC_ADDRESS = "E3:AD:D7:5E:4D:C4"
+        const val SCAN_TIMEOUT_MS = 15000L
     }
 
     private lateinit var binding: ActivityIndoorMapBinding
     private lateinit var mapView: MapView
     private var aMap: AMap? = null
+
+    // BLE
+    private var bluetoothAdapter: BluetoothAdapter? = null
+    private var bleScanner: BluetoothLeScanner? = null
+    private var isScanning = false
+    private val handler = Handler(Looper.getMainLooper())
 
     // Hybrid PDR
     private var pdrEngine: HybridPdrEngine? = null
@@ -60,23 +69,19 @@ class IndoorMapActivity : AppCompatActivity() {
     }
 
     private fun requestBlePermissions() {
+        val permissions = mutableListOf<String>()
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val permissions = arrayOf(
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_CONNECT,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            )
-            if (permissions.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) {
-                ActivityCompat.requestPermissions(this, permissions, REQUEST_BLE_PERMISSIONS)
-            } else {
-                initBle()
-            }
+            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+        permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+
+        val needed = permissions.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (needed.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, needed.toTypedArray(), REQUEST_BLE_PERMISSIONS)
         } else {
-            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), REQUEST_BLE_PERMISSIONS)
-            } else {
-                initBle()
-            }
+            initBle()
         }
     }
 
@@ -92,34 +97,100 @@ class IndoorMapActivity : AppCompatActivity() {
     @SuppressLint("MissingPermission")
     private fun initBle() {
         val bluetoothManager = getSystemService(BLUETOOTH_SERVICE) as BluetoothManager
-        val adapter = bluetoothManager.adapter
+        bluetoothAdapter = bluetoothManager.adapter
 
-        if (adapter == null || !adapter.isEnabled) {
+        if (bluetoothAdapter == null || !bluetoothAdapter!!.isEnabled) {
             Toast.makeText(this, "Please enable Bluetooth", Toast.LENGTH_LONG).show()
             return
         }
 
-        // Find the SCS device
-        val device: BluetoothDevice? = adapter.bondedDevices.find { it.address == SCS_MAC_ADDRESS }
-
-        if (device != null) {
-            scsBleManager = ScsBleManager(this) { scsData ->
-                // Feed quaternion to PDR Engine
-                if (!scsData.isRaw) {
-                    pdrEngine?.setScsQuaternion(scsData.qx, scsData.qy, scsData.qz, scsData.qw)
-                }
-            }
-            scsBleManager?.connect(device)
-            Toast.makeText(this, "Connecting to SCS: ${device.name}", Toast.LENGTH_SHORT).show()
-
-            // Start streaming Quaternion after a delay (allow GATT discovery)
-            binding.root.postDelayed({
-                scsBleManager?.startStreaming(ScsBleManager.TYPE_QUATERNION, 50)
-                Log.d(TAG, "Started SCS Quaternion streaming @ 50Hz")
-            }, 3000)
-        } else {
-            Toast.makeText(this, "SCS not paired. Using phone only. Pair '$SCS_MAC_ADDRESS' in Bluetooth settings.", Toast.LENGTH_LONG).show()
+        bleScanner = bluetoothAdapter?.bluetoothLeScanner
+        if (bleScanner == null) {
+            Toast.makeText(this, "BLE Scanner not available", Toast.LENGTH_LONG).show()
+            return
         }
+
+        Log.d(TAG, "Starting BLE scan for SCS device: $SCS_MAC_ADDRESS")
+        Toast.makeText(this, "Scanning for SCS: $SCS_MAC_ADDRESS ...", Toast.LENGTH_SHORT).show()
+        startBleScan()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startBleScan() {
+        if (isScanning) return
+        isScanning = true
+
+        // Stop scan after timeout
+        handler.postDelayed({
+            stopBleScan()
+            if (scsBleManager == null) {
+                Log.w(TAG, "SCS device not found after scan timeout")
+                Toast.makeText(this, "SCS not found. Using phone only.", Toast.LENGTH_LONG).show()
+            }
+        }, SCAN_TIMEOUT_MS)
+
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .build()
+
+        // Optional: Filter by MAC address (some phones support, some don't)
+        // val filter = ScanFilter.Builder().setDeviceAddress(SCS_MAC_ADDRESS).build()
+        // bleScanner?.startScan(listOf(filter), settings, scanCallback)
+
+        // Scan all devices and filter manually (more reliable)
+        bleScanner?.startScan(null, settings, scanCallback)
+        Log.d(TAG, "BLE scan started")
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopBleScan() {
+        if (!isScanning) return
+        isScanning = false
+        bleScanner?.stopScan(scanCallback)
+        Log.d(TAG, "BLE scan stopped")
+    }
+
+    private val scanCallback = object : ScanCallback() {
+        @SuppressLint("MissingPermission")
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            val device = result.device
+            val mac = device.address.uppercase()
+            val name = device.name ?: "Unknown"
+
+            Log.d(TAG, "Found BLE device: $name [$mac] RSSI: ${result.rssi}")
+
+            if (mac == SCS_MAC_ADDRESS.uppercase()) {
+                Log.d(TAG, ">>> SCS device found! Connecting...")
+                stopBleScan()
+                connectToScs(device)
+            }
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            Log.e(TAG, "BLE scan failed: $errorCode")
+            isScanning = false
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun connectToScs(device: BluetoothDevice) {
+        Toast.makeText(this, "Connecting to SCS: ${device.name ?: device.address}", Toast.LENGTH_SHORT).show()
+
+        scsBleManager = ScsBleManager(this) { scsData ->
+            // Feed quaternion to PDR Engine
+            if (!scsData.isRaw) {
+                pdrEngine?.setScsQuaternion(scsData.qx, scsData.qy, scsData.qz, scsData.qw)
+                Log.v(TAG, "SCS Quat: qw=${scsData.qw}, qx=${scsData.qx}, qy=${scsData.qy}, qz=${scsData.qz}")
+            }
+        }
+        scsBleManager?.connect(device)
+
+        // Start streaming Quaternion after a delay (allow GATT discovery)
+        handler.postDelayed({
+            scsBleManager?.startStreaming(ScsBleManager.TYPE_QUATERNION, 50)
+            Log.d(TAG, "Started SCS Quaternion streaming @ 50Hz")
+            Toast.makeText(this, "SCS streaming started!", Toast.LENGTH_SHORT).show()
+        }, 4000)
     }
 
     private fun setupControls() {
@@ -205,8 +276,10 @@ class IndoorMapActivity : AppCompatActivity() {
         mapView.onSaveInstanceState(outState)
     }
 
+    @SuppressLint("MissingPermission")
     override fun onDestroy() {
         super.onDestroy()
+        stopBleScan()
         pdrEngine?.stop()
         mapView.onDestroy()
     }
