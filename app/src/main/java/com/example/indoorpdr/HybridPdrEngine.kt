@@ -60,8 +60,8 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
     // Direction Lock - reduces jitter when walking consistently
     private var lockedHeadingRad: Float? = null
     private var consecutiveDirectionCount = 0
-    private val DIRECTION_LOCK_THRESHOLD = 3  // Lock after 3 consistent steps
-    private val DIRECTION_UNLOCK_TOLERANCE = 0.52f // ~30 degrees to unlock
+    private val DIRECTION_LOCK_THRESHOLD = 2  // Lock after 2 consistent steps (was 3)
+    private val DIRECTION_UNLOCK_TOLERANCE = 0.79f // ~45 degrees to unlock (was 30)
 
     // Step Length Smoothing
     private val stepLengthHistory = mutableListOf<Double>()
@@ -196,14 +196,17 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
 
     /**
      * Direction Lock: Maintains heading when walking consistently in one direction
+     * Fixed: Handles angle wrapping correctly (e.g., -π and +π are the same direction)
      */
     private fun applyDirectionLock(currentHeading: Float): Float {
         val locked = lockedHeadingRad
 
         if (locked != null) {
-            // Check if we should maintain lock
-            val diff = Math.abs(currentHeading - locked)
-            if (diff < DIRECTION_UNLOCK_TOLERANCE) {
+            // Calculate angular difference with wrapping
+            val diff = normalizeAngle(currentHeading - locked)
+            val absDiff = Math.abs(diff)
+
+            if (absDiff < DIRECTION_UNLOCK_TOLERANCE) {
                 consecutiveDirectionCount++
                 return locked  // Stay locked
             } else {
@@ -220,6 +223,16 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
             }
             return currentHeading
         }
+    }
+
+    /**
+     * Normalize angle to [-π, π] range
+     */
+    private fun normalizeAngle(angle: Float): Float {
+        var normalized = angle
+        while (normalized > Math.PI) normalized -= (2 * Math.PI).toFloat()
+        while (normalized < -Math.PI) normalized += (2 * Math.PI).toFloat()
+        return normalized
     }
 
     /**
