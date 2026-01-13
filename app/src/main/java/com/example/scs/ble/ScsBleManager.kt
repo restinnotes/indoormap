@@ -38,11 +38,20 @@ class ScsBleManager(private val context: Context, private val dataCallback: (Scs
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             Log.d(TAG, "onConnectionStateChange: status=$status, newState=$newState")
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                Log.i(TAG, "GATT Connected. Discovering services...")
-                gatt.discoverServices()
+                Log.i(TAG, "GATT Connected. Requesting MTU 512...")
+                if (!gatt.requestMtu(512)) {
+                    Log.e(TAG, "Request MTU failed! Proceeding anyway...")
+                    gatt.discoverServices()
+                }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.w(TAG, "GATT Disconnected.")
             }
+        }
+
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            Log.d(TAG, "onMtuChanged: mtu=$mtu, status=$status")
+            Log.i(TAG, "Discovering services...")
+            gatt.discoverServices()
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
