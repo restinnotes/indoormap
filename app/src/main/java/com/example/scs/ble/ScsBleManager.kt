@@ -128,23 +128,22 @@ class ScsBleManager(private val context: Context, private val dataCallback: (Scs
     }
 
     /**
-     * Start stream (Leaf Mode)
+     * Start stream - Central Mode (Direct to Node)
      * @param type 125 for Raw, 131 for Quat
      */
     fun startStreaming(type: Int, freq: Int = 50) {
-        // Leaf Stream: 0x33 0x08 (2) + 5 zeros + Freq(1) + ID(1) + Mock(1) = 10 Bytes
-        val cmd = ByteBuffer.allocate(10).order(ByteOrder.LITTLE_ENDIAN)
-        cmd.put(0x33.toByte())
-        cmd.put(0x08.toByte())
-
-        cmd.put(ByteArray(5)) // Padding/Time
-
+        // Central Stream: 0x19 0x0C + 8 zeros + Freq + ID + Mock + Pad = 14 Bytes
+        val cmd = ByteBuffer.allocate(14).order(ByteOrder.LITTLE_ENDIAN)
+        cmd.put(0x19.toByte())
+        cmd.put(0x0C.toByte())
+        cmd.put(ByteArray(8)) // Padding (Time + Flags)
         cmd.put(freq.toByte())
         cmd.put(if (type == TYPE_QUATERNION) 0xF0.toByte() else 0x00.toByte())
-        cmd.put(0x00.toByte()) // Mock = 0
+        cmd.put(0x00.toByte()) // Mock = Real
+        cmd.put(0x00.toByte()) // Pad
 
         val bytes = cmd.array()
-        Log.d(TAG, "Sending Leaf Stream (${bytes.size} bytes): ${bytes.contentToString()}")
+        Log.d(TAG, "Sending Central Stream (${bytes.size} bytes): ${bytes.contentToString()}")
         sendCommand(bytes)
     }
 
