@@ -1,0 +1,57 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.example.indoorpdr'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.example.indoorpdr"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            // AMAP 3D Map SDK usually provides .so files for these architectures
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+    buildFeatures {
+        viewBinding true
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+
+    // Amap (Gaode) 3D Map SDK
+    // Note: You may need to download the jar/so manually if not available in public maven,
+    // but looking for public coordinate first.
+    // Usually: implementation 'com.amap.api:3dmap:latest.integration'
+    // For stability, let's try a specific version if known, or use fileTree for local libs.
+    // implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation 'com.amap.api:3dmap:9.8.2'
+    implementation 'com.amap.api:location:6.4.0' // If we need location
+}
