@@ -188,10 +188,10 @@ class IndoorMapActivity : AppCompatActivity() {
         }
         scsBleManager?.connect(device)
 
-        // Step 1: Send Config Command after GATT discovery (allow 4 sec)
+        // Step 1: Send Leaf Enable Command (Protocol V3 Leaf Mode)
         handler.postDelayed({
-            Log.d(TAG, "Sending Config Command...")
-            scsBleManager?.sendConfigCommand(SCS_MAC_ADDRESS)
+            Log.d(TAG, "Sending Leaf Enable Command...")
+            scsBleManager?.sendLeafEnable()
         }, 4000)
 
         // Step 2: Start Streaming after Config (allow 3 sec more)
