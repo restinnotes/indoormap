@@ -149,6 +149,9 @@ class IndoorMapActivity : AppCompatActivity() {
         Log.d(TAG, "BLE scan stopped")
     }
 
+    // Flag to prevent double connections
+    private var isConnecting = false
+
     private val scanCallback = object : ScanCallback() {
         @SuppressLint("MissingPermission")
         override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -158,7 +161,8 @@ class IndoorMapActivity : AppCompatActivity() {
 
             Log.v(TAG, "Scanned: $name [$mac] (Target: ${SCS_MAC_ADDRESS.uppercase()})")
 
-            if (mac == SCS_MAC_ADDRESS.uppercase() || name.contains("BAN Z-NODE", ignoreCase = true)) {
+            if ((mac == SCS_MAC_ADDRESS.uppercase() || name.contains("BAN Z-NODE", ignoreCase = true)) && !isConnecting) {
+                isConnecting = true
                 Log.d(TAG, ">>> Target SCS found: $name [$mac]! Connecting...")
                 stopBleScan()
                 connectToScs(device)
