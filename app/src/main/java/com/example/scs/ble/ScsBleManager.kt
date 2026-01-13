@@ -88,15 +88,23 @@ class ScsBleManager(private val context: Context, private val dataCallback: (Scs
      * @param type 125 for Raw, 131 for Quat
      */
     fun startStreaming(type: Int, freq: Int = 50) {
-        val cmd = ByteBuffer.allocate(13).order(ByteOrder.LITTLE_ENDIAN)
+        // Corrected based on Python _scs_reference.py
+        // 2 (Op) + 4 (Time) + 4 (Flags) + 1 (Freq) + 1 (ID) + 1 (Mock) + 1 (Pad) = 14 Bytes
+        val cmd = ByteBuffer.allocate(14).order(ByteOrder.LITTLE_ENDIAN)
         cmd.put(0x19.toByte())
         cmd.put(0x0C.toByte())
-        cmd.put(ByteArray(5)) // Padding
+
+        // 8 Bytes of "Padding" (Time + Flags)
+        cmd.put(ByteArray(8))
+
         cmd.put(freq.toByte())
         cmd.put(if (type == TYPE_QUATERNION) 0xF0.toByte() else 0x00.toByte())
         cmd.put(0x00.toByte()) // Real
         cmd.put(0x00.toByte())
-        sendCommand(cmd.array())
+
+        val bytes = cmd.array()
+        Log.d(TAG, "Sending Command (${bytes.size} bytes): ${bytes.contentToString()}")
+        sendCommand(bytes)
     }
 
     private fun parsePacket(data: ByteArray) {
