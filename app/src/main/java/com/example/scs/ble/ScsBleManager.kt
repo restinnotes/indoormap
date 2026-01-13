@@ -111,6 +111,7 @@ class ScsBleManager(private val context: Context, private val dataCallback: (Scs
                 val qy = buffer.getShort(7) / 16384.0f
                 val qz = buffer.getShort(9) / 16384.0f
                 val qw = buffer.getShort(11) / 16384.0f
+                Log.d(TAG, "Parsed Quat: ts=$ts, qx=$qx, qy=$qy, qz=$qz, qw=$qw")
                 dataCallback(ScsData(ts, qx, qy, qz, qw))
             }
             TYPE_RAW_DATA -> {
