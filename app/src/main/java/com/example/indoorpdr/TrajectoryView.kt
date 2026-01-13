@@ -49,47 +49,80 @@ class TrajectoryView(context: Context, attrs: AttributeSet?) : View(context, att
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        val w = width.toFloat()
-        val h = height.toFloat()
-        centerX = w / 2
-        centerY = h / 2
-
-        // Draw Axis
-        paint.color = Color.LTGRAY
-        paint.strokeWidth = 2f
-        canvas.drawLine(0f, centerY, w, centerY, paint) // X Axis
-        canvas.drawLine(centerX, 0f, centerX, h, paint) // Y Axis
-
-        // Draw Grid (every 1 meter)
-        paint.color = 0xFFEEEEEE.toInt()
-        // ... grid logic omitted for simplicity ...
-
-        // Draw Path
         if (points.isEmpty()) return
 
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val padding = 50f
+
+        // 1. Calculate Bounds
+        var minX = 0.0
+        var maxX = 0.0
+        var minY = 0.0
+        var maxY = 0.0
+
+        for (p in points) {
+            if (p.first < minX) minX = p.first
+            if (p.first > maxX) maxX = p.first
+            if (p.second < minY) minY = p.second
+            if (p.second > maxY) maxY = p.second
+        }
+
+        // Add some buffer to bounds so point isn't on the edge
+        val rangeX = (maxX - minX).coerceAtLeast(2.0) // Min 2 meters range
+        val rangeY = (maxY - minY).coerceAtLeast(2.0)
+
+        // 2. Calculate Scale to fit screen
+        val scaleX = (w - 2 * padding) / rangeX.toFloat()
+        val scaleY = (h - 2 * padding) / rangeY.toFloat()
+        scale = scaleX.coerceAtMost(scaleY)
+
+        // 3. Calculate Translation (Centering)
+        // Center of gravity or center of bounds? Let's use center of bounds.
+        val midX = (maxX + minX) / 2.0
+        val midY = (maxY + minY) / 2.0
+
+        centerX = w / 2 - (midX * scale).toFloat()
+        centerY = h / 2 + (midY * scale).toFloat()
+
+        // Helper for Coordinate Conversion
+        fun mToPxX(m: Double) = centerX + (m * scale).toFloat()
+        fun mToPxY(m: Double) = centerY - (m * scale).toFloat()
+
+        // 4. Draw Axis & Grid
+        paint.color = 0xFFF0F0F0.toInt() // Very light gray
+        paint.strokeWidth = 1f
+        // Grid every 1 meter
+        for (i in (minX.toInt()-5)..(maxX.toInt()+5)) {
+            val px = mToPxX(i.toDouble())
+            canvas.drawLine(px, 0f, px, h, paint)
+        }
+        for (i in (minY.toInt()-5)..(maxY.toInt()+5)) {
+            val py = mToPxY(i.toDouble())
+            canvas.drawLine(0f, py, w, py, paint)
+        }
+
+        paint.color = Color.LTGRAY
+        paint.strokeWidth = 3f
+        canvas.drawLine(mToPxX(minX - 2), centerY, mToPxX(maxX + 2), centerY, paint) // X Axis
+        canvas.drawLine(centerX, mToPxY(minY - 2), centerX, mToPxY(maxY + 2), paint) // Y Axis
+
+        // 5. Draw Path
         paint.color = Color.BLUE
         paint.strokeWidth = 8f
-
-        // Convert Meter coordinates to Screen coordinates
-        // Screen X = CenterX + (MeterX * Scale)
-        // Screen Y = CenterY - (MeterY * Scale)  <-- Y is inverted in screen coords (Up is minus)
 
         for (i in 0 until points.size - 1) {
             val p1 = points[i]
             val p2 = points[i+1]
-
-            val x1 = centerX + (p1.first * scale).toFloat()
-            val y1 = centerY - (p1.second * scale).toFloat()
-            val x2 = centerX + (p2.first * scale).toFloat()
-            val y2 = centerY - (p2.second * scale).toFloat()
-
-            canvas.drawLine(x1, y1, x2, y2, paint)
+            canvas.drawLine(mToPxX(p1.first), mToPxY(p1.second), mToPxX(p2.first), mToPxY(p2.second), paint)
         }
 
-        // Draw Current Pos (Red Dot)
+        // 6. Draw Origin (Blue Cross)
+        paint.color = Color.GREEN
+        canvas.drawCircle(mToPxX(0.0), mToPxY(0.0), 10f, paint)
+
+        // 7. Draw Current Pos (Red Dot)
         val last = points.last()
-        val lx = centerX + (last.first * scale).toFloat()
-        val ly = centerY - (last.second * scale).toFloat()
-        canvas.drawCircle(lx, ly, 15f, dotPaint)
+        canvas.drawCircle(mToPxX(last.first), mToPxY(last.second), 20f, dotPaint)
     }
 }
