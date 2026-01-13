@@ -57,11 +57,9 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
     var useHdr = true
     private val HDR_TOLERANCE_RAD = 0.26f // ~15 degrees
 
-    // Direction Lock - reduces jitter when walking consistently
-    private var lockedHeadingRad: Float? = null
-    private var consecutiveDirectionCount = 0
-    private val DIRECTION_LOCK_THRESHOLD = 2  // Lock after 2 consistent steps (was 3)
-    private val DIRECTION_UNLOCK_TOLERANCE = 0.79f // ~45 degrees to unlock (was 30)
+    // Heading Smoothing - Low-pass filter to reduce jitter BEFORE HDR snap
+    private var smoothedHeadingRad: Float? = null
+    private val HEADING_SMOOTHING_ALPHA = 0.3f  // Lower = more smoothing (0.0-1.0)
 
     // Step Length Smoothing
     private val stepLengthHistory = mutableListOf<Double>()
@@ -82,8 +80,7 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
         stepCount = 0
 
         // Reset enhanced PDR state
-        lockedHeadingRad = null
-        consecutiveDirectionCount = 0
+        smoothedHeadingRad = null
         stepLengthHistory.clear()
 
         val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
@@ -171,9 +168,11 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
                     headingSource = "Phone"
                 }
 
-                // Apply HDR if enabled, then direction lock
-                val snappedHeading = if (useHdr) snapToGrid(rawHeadingRad) else rawHeadingRad
-                val finalHeadingRad = applyDirectionLock(snappedHeading)
+                // Apply heading smoothing FIRST to reduce jitter
+                val smoothedHeading = smoothHeading(rawHeadingRad)
+
+                // Then apply HDR snap to the smoothed heading
+                val finalHeadingRad = if (useHdr) snapToGrid(smoothedHeading) else smoothedHeading
 
                 updateLocation(stepLength, finalHeadingRad.toDouble(), headingSource)
             }
@@ -195,34 +194,25 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
     }
 
     /**
-     * Direction Lock: Maintains heading when walking consistently in one direction
-     * Fixed: Handles angle wrapping correctly (e.g., -π and +π are the same direction)
+     * Heading Smoothing: Low-pass filter to reduce jitter before HDR snap
+     * Uses exponential moving average with proper angle wrapping
      */
-    private fun applyDirectionLock(currentHeading: Float): Float {
-        val locked = lockedHeadingRad
+    private fun smoothHeading(rawHeading: Float): Float {
+        val prev = smoothedHeadingRad
 
-        if (locked != null) {
-            // Calculate angular difference with wrapping
-            val diff = normalizeAngle(currentHeading - locked)
-            val absDiff = Math.abs(diff)
-
-            if (absDiff < DIRECTION_UNLOCK_TOLERANCE) {
-                consecutiveDirectionCount++
-                return locked  // Stay locked
-            } else {
-                // Unlock - direction changed significantly
-                lockedHeadingRad = null
-                consecutiveDirectionCount = 1
-                return currentHeading
-            }
-        } else {
-            // No lock yet - check if we should establish one
-            consecutiveDirectionCount++
-            if (consecutiveDirectionCount >= DIRECTION_LOCK_THRESHOLD) {
-                lockedHeadingRad = currentHeading
-            }
-            return currentHeading
+        if (prev == null) {
+            smoothedHeadingRad = rawHeading
+            return rawHeading
         }
+
+        // Calculate difference with angle wrapping
+        val diff = normalizeAngle(rawHeading - prev)
+
+        // Apply exponential smoothing
+        val smoothed = normalizeAngle(prev + HEADING_SMOOTHING_ALPHA * diff)
+        smoothedHeadingRad = smoothed
+
+        return smoothed
     }
 
     /**
