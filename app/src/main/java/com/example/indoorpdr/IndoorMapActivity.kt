@@ -188,18 +188,19 @@ class IndoorMapActivity : AppCompatActivity() {
         }
         scsBleManager?.connect(device)
 
-        // Step 1: Send Leaf Enable Command (Protocol V3 Leaf Mode)
+        // Step 1: Send Central Configuration (Protocol V3 Central Mode)
+        // Matches Python: Connect -> Wait ~2s -> Config -> Wait ~3s -> Start
         handler.postDelayed({
-            Log.d(TAG, "Sending Leaf Enable Command...")
-            scsBleManager?.sendLeafEnable()
-        }, 4000)
+            Log.d(TAG, "Sending Central Config (MAC: ${device.address})...")
+            scsBleManager?.sendCentralConfig(device.address)
+        }, 2000)
 
-        // Step 2: Start Streaming after Config (allow 3 sec more)
+        // Step 2: Start Streaming (Fresh Start)
         handler.postDelayed({
-            scsBleManager?.startStreaming(ScsBleManager.TYPE_QUATERNION, 50)
-            Log.d(TAG, "Started SCS Quaternion streaming @ 50Hz")
+            Log.d(TAG, "Starting SCS Quaternion streaming (Central Mode @ 50Hz)...")
+            scsBleManager?.startStreamingCentral(ScsBleManager.TYPE_QUATERNION, 50)
             Toast.makeText(this, "SCS streaming started!", Toast.LENGTH_SHORT).show()
-        }, 7000)
+        }, 5000)
     }
 
     private fun setupControls() {
