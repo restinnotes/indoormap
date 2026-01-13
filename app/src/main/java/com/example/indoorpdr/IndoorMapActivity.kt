@@ -184,12 +184,18 @@ class IndoorMapActivity : AppCompatActivity() {
         }
         scsBleManager?.connect(device)
 
-        // Start streaming Quaternion after a delay (allow GATT discovery)
+        // Step 1: Send Config Command after GATT discovery (allow 4 sec)
+        handler.postDelayed({
+            Log.d(TAG, "Sending Config Command...")
+            scsBleManager?.sendConfigCommand(SCS_MAC_ADDRESS)
+        }, 4000)
+
+        // Step 2: Start Streaming after Config (allow 3 sec more)
         handler.postDelayed({
             scsBleManager?.startStreaming(ScsBleManager.TYPE_QUATERNION, 50)
             Log.d(TAG, "Started SCS Quaternion streaming @ 50Hz")
             Toast.makeText(this, "SCS streaming started!", Toast.LENGTH_SHORT).show()
-        }, 4000)
+        }, 7000)
     }
 
     private fun setupControls() {

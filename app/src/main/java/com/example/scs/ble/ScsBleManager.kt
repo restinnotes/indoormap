@@ -84,6 +84,35 @@ class ScsBleManager(private val context: Context, private val dataCallback: (Scs
     }
 
     /**
+     * Send MAC configuration command (Central Config)
+     * Must be called BEFORE startStreaming()
+     * @param macAddress Device MAC in format "XX:XX:XX:XX:XX:XX"
+     */
+    fun sendConfigCommand(macAddress: String) {
+        // Convert MAC string to bytes (reversed order as per Python SDK)
+        val macBytes = macAddress.split(":").map { it.toInt(16).toByte() }.toByteArray().reversedArray()
+
+        // Command: 0x00 0x38 + (MAC 6 bytes + Control 1 byte) * 8 slots
+        // We fill slot 0, leave other 7 slots zeroed
+        val cmd = ByteBuffer.allocate(58).order(ByteOrder.LITTLE_ENDIAN) // 2 + 7*8 = 58
+        cmd.put(0x00.toByte())
+        cmd.put(0x38.toByte())
+
+        // Slot 0: MAC (6 bytes, reversed) + Control (1 byte)
+        cmd.put(macBytes)
+        cmd.put(0x01.toByte()) // Enable this device
+
+        // Fill remaining 7 slots with zeros (7 bytes each)
+        for (i in 0 until 7) {
+            cmd.put(ByteArray(7))
+        }
+
+        val bytes = cmd.array()
+        Log.d(TAG, "Sending Config Command (${bytes.size} bytes)")
+        sendCommand(bytes)
+    }
+
+    /**
      * Start stream based on type
      * @param type 125 for Raw, 131 for Quat
      */
@@ -103,7 +132,7 @@ class ScsBleManager(private val context: Context, private val dataCallback: (Scs
         cmd.put(0x00.toByte())
 
         val bytes = cmd.array()
-        Log.d(TAG, "Sending Command (${bytes.size} bytes): ${bytes.contentToString()}")
+        Log.d(TAG, "Sending Stream Command (${bytes.size} bytes): ${bytes.contentToString()}")
         sendCommand(bytes)
     }
 
