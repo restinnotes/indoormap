@@ -153,8 +153,14 @@ class ScsBleManager(private val context: Context, private val dataCallback: (Scs
         val buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
         val type = buffer.get(0).toInt() and 0xFF
 
+        Log.d(TAG, "parsePacket: type=$type, size=${data.size}, raw=${data.take(20).map { it.toInt() and 0xFF }}")
+
         when (type) {
             TYPE_QUATERNION -> {
+                if (data.size < 13) {
+                    Log.w(TAG, "Quaternion packet too short: ${data.size}")
+                    return
+                }
                 val ts = buffer.getShort(3).toLong() and 0xFFFF
                 val qx = buffer.getShort(5) / 16384.0f
                 val qy = buffer.getShort(7) / 16384.0f
@@ -164,7 +170,10 @@ class ScsBleManager(private val context: Context, private val dataCallback: (Scs
                 dataCallback(ScsData(ts, qx, qy, qz, qw))
             }
             TYPE_RAW_DATA -> {
-                // [Type 1] [Padding 1] [TS 4] [ax 2] [ay 2] [az 2] [gx 2] [gy 2] [gz 2]
+                if (data.size < 18) {
+                    Log.w(TAG, "Raw packet too short: ${data.size}")
+                    return
+                }
                 val ts = buffer.getInt(2).toLong()
                 val ax = buffer.getShort(6) / (16384.0f * 2 / 16)
                 val ay = buffer.getShort(8) / (16384.0f * 2 / 16)
@@ -172,7 +181,11 @@ class ScsBleManager(private val context: Context, private val dataCallback: (Scs
                 val gx = buffer.getShort(12) / (16384.0f * 2 / 4096)
                 val gy = buffer.getShort(14) / (16384.0f * 2 / 4096)
                 val gz = buffer.getShort(16) / (16384.0f * 2 / 4096)
+                Log.d(TAG, "Parsed Raw: ts=$ts, ax=$ax, ay=$ay, az=$az")
                 dataCallback(ScsData(ts, qx=0f, qy=0f, qz=0f, qw=0f, ax, ay, az, gx, gy, gz, isRaw=true))
+            }
+            else -> {
+                Log.w(TAG, "Unknown packet type: $type (size=${data.size})")
             }
         }
     }
