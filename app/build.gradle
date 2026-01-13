@@ -47,11 +47,6 @@ dependencies {
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
 
     // Amap (Gaode) 3D Map SDK
-    // Note: You may need to download the jar/so manually if not available in public maven,
-    // but looking for public coordinate first.
-    // Usually: implementation 'com.amap.api:3dmap:latest.integration'
-    // For stability, let's try a specific version if known, or use fileTree for local libs.
-    // implementation fileTree(dir: 'libs', include: ['*.jar'])
+    // Note: 3dmap already includes location classes, so we don't need separate location dependency
     implementation 'com.amap.api:3dmap:9.8.2'
-    implementation 'com.amap.api:location:6.4.0' // If we need location
 }
