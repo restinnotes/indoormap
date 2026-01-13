@@ -26,10 +26,9 @@ class IndoorMapActivity : AppCompatActivity() {
     companion object {
         const val TAG = "IndoorMapActivity"
         const val REQUEST_BLE_PERMISSIONS = 1001
-        // SCS Sensor MAC Address - Update this to your device!
-        // Format: "XX:XX:XX:XX:XX:XX" (uppercase)
-        const val SCS_MAC_ADDRESS = "E3:AD:D7:5E:4D:C4"
-        const val SCAN_TIMEOUT_MS = 15000L
+        // Updated MAC from logs: C4:4D:5E:E3:AD:D7
+        const val SCS_MAC_ADDRESS = "C4:4D:5E:E3:AD:D7"
+        const val SCAN_TIMEOUT_MS = 20000L
     }
 
     private lateinit var binding: ActivityIndoorMapBinding
@@ -157,10 +156,10 @@ class IndoorMapActivity : AppCompatActivity() {
             val mac = device.address.uppercase()
             val name = device.name ?: "Unknown"
 
-            Log.d(TAG, "Found BLE device: $name [$mac] RSSI: ${result.rssi}")
+            Log.v(TAG, "Scanned: $name [$mac] (Target: ${SCS_MAC_ADDRESS.uppercase()})")
 
-            if (mac == SCS_MAC_ADDRESS.uppercase()) {
-                Log.d(TAG, ">>> SCS device found! Connecting...")
+            if (mac == SCS_MAC_ADDRESS.uppercase() || name.contains("BAN Z-NODE", ignoreCase = true)) {
+                Log.d(TAG, ">>> Target SCS found: $name [$mac]! Connecting...")
                 stopBleScan()
                 connectToScs(device)
             }

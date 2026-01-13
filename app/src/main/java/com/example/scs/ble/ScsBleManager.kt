@@ -36,18 +36,35 @@ class ScsBleManager(private val context: Context, private val dataCallback: (Scs
     @SuppressLint("MissingPermission")
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            Log.d(TAG, "onConnectionStateChange: status=$status, newState=$newState")
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                Log.i(TAG, "GATT Connected. Discovering services...")
                 gatt.discoverServices()
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                Log.w(TAG, "GATT Disconnected.")
             }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            val service = gatt.getService(SERVICE_UUID)
-            writeChar = service?.getCharacteristic(WRITE_UUID)
-            service?.getCharacteristic(READ_UUID)?.let { enableNotifications(gatt, it) }
+            Log.d(TAG, "onServicesDiscovered: status=$status")
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                val service = gatt.getService(SERVICE_UUID)
+                if (service != null) {
+                    Log.i(TAG, "SCS Service Found!")
+                    writeChar = service.getCharacteristic(WRITE_UUID)
+                    service.getCharacteristic(READ_UUID)?.let {
+                        Log.i(TAG, "Enabling Notifications...")
+                        enableNotifications(gatt, it)
+                    }
+                } else {
+                    Log.e(TAG, "SCS Service NOT found on this device!")
+                }
+            }
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            // Log highly frequent data only if needed using verbose
+            // Log.v(TAG, "onCharacteristicChanged: size=${characteristic.value.size}")
             parsePacket(characteristic.value)
         }
     }
