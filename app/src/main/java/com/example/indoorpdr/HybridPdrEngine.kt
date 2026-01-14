@@ -15,6 +15,7 @@ import kotlin.math.sqrt
  * Hybrid PDR Engine
  * - Swing Plane: PCA-based arm swing analysis with Smoothed Confidence
  * - Key Fix: Check total variance before PCA to avoid divide-by-zero on static data.
+ * - Key Fix: Heading Smoothing and Sign Consistency.
  */
 class HybridPdrEngine(private val context: Context) : SensorEventListener {
 
@@ -25,7 +26,22 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
         fun onPhoneHeading(headingDeg: Float)
     }
 
-    // ...
+    enum class SwingSource { SCS, PHONE }
+    enum class SwingState { IDLE, SWINGING }
+
+    var listener: PdrListener? = null
+    var swingSource = SwingSource.SCS
+        set(value) {
+            field = value
+            swingDetector.clear()
+            listener?.onDebugMessage("Switched Swing Source to: $value")
+        }
+    var swingState = SwingState.IDLE
+        private set
+
+    private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    private val swingDetector = SwingPlaneDetector(this)
+    private var isRunning = false
 
     fun start(startPoint: LatLng) {
         isRunning = true
@@ -37,7 +53,16 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
         sensorManager.registerListener(this, rot, SensorManager.SENSOR_DELAY_UI)
     }
 
-    // ...
+    fun stop() {
+        isRunning = false
+        sensorManager.unregisterListener(this)
+    }
+
+    fun setScsRawData(ax: Float, ay: Float, az: Float, gx: Float, gy: Float, gz: Float) {
+        if (swingSource == SwingSource.SCS) {
+            swingDetector.addSample(ax, ay, az)
+        }
+    }
 
     override fun onSensorChanged(event: SensorEvent?) {
         if (event == null) return
@@ -124,7 +149,7 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
         // Heading Smoothing & Stability
         private val lastNormal = FloatArray(3)
         private var hasLastNormal = false
-        private val HEADING_SMOOTH_WINDOW = 5 // 1 second @ 5Hz (Detection rate 5Hz)
+        private val HEADING_SMOOTH_WINDOW = 5
         private val headingCosBuf = FloatArray(HEADING_SMOOTH_WINDOW)
         private val headingSinBuf = FloatArray(HEADING_SMOOTH_WINDOW)
         private var headingPtr = 0
@@ -134,15 +159,13 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
         private val STATE_TRANSITION_COUNT = 3
         private var currentState = SwingState.IDLE
         private var transitionCounter = 0
-        private val STATE_THRESHOLD = 1.5f
-
-        // *** KEY FIX: Motion Variance Threshold ***
-        // If total variance (trace) is below this, data is considered "static" -> IDLE, score = 0
-        private val MOTION_VARIANCE_THRESHOLD = 1.0f // m/s^2 squared. Tune as needed.
+        private val STATE_THRESHOLD = 1.5f // Adjusted threshold
+        private val MOTION_VARIANCE_THRESHOLD = 1.0f
 
         fun clear() {
             ptr = 0; isFull = false; scorePtr = 0; scoreHistFull = false
             currentState = SwingState.IDLE; transitionCounter = 0
+            hasLastNormal = false; headingPtr = 0; headingHistFull = false
         }
 
         fun addSample(ax: Float, ay: Float, az: Float) {
@@ -171,27 +194,20 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
             }
             xx/=WINDOW_SIZE; xy/=WINDOW_SIZE; xz/=WINDOW_SIZE; yy/=WINDOW_SIZE; yz/=WINDOW_SIZE; zz/=WINDOW_SIZE
 
-            // *** KEY FIX: Check Motion Variance ***
-            val motionVariance = xx + yy + zz // Trace of covariance = total variance
+            val motionVariance = xx + yy + zz
             var rawQuality: Float
             var normal = floatArrayOf(0f, 0f, 0f)
 
             if (motionVariance < MOTION_VARIANCE_THRESHOLD) {
-                // Static: Skip PCA, set score to 0
                 rawQuality = 0f
             } else {
                 val eigen = engine.solveEigen3x3(xx, xy, xz, yy, yz, zz)
                 normal = eigen.vectors[0]
 
                 // *** FIX SIGN FLIPPING ***
-                // Eigenvectors have arbitrary sign. Enforce temporal consistency.
                 if (hasLastNormal) {
                     val dot = normal[0]*lastNormal[0] + normal[1]*lastNormal[1] + normal[2]*lastNormal[2]
-                    if (dot < 0) {
-                        normal[0] = -normal[0]
-                        normal[1] = -normal[1]
-                        normal[2] = -normal[2]
-                    }
+                    if (dot < 0) { normal[0] = -normal[0]; normal[1] = -normal[1]; normal[2] = -normal[2] }
                 }
                 lastNormal[0] = normal[0]; lastNormal[1] = normal[1]; lastNormal[2] = normal[2]
                 hasLastNormal = true
@@ -231,17 +247,12 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
             headingPtr = (headingPtr + 1) % HEADING_SMOOTH_WINDOW
             if (headingPtr == 0) headingHistFull = true
 
-            var sumCos = 0f; var sumSin = 0f
             val hCount = if (headingHistFull) HEADING_SMOOTH_WINDOW else headingPtr
-            // Use weighted average? Or simple average? Simple for now.
-            // Only smooth if we are somewhat stable (Score > 0.5) to avoid smoothing noise?
-            // Actually, keep it simple.
+            var sumCos = 0f; var sumSin = 0f
             for(i in 0 until hCount) { sumCos += headingCosBuf[i]; sumSin += headingSinBuf[i] }
 
             var smoothedHeadingDeg = Math.toDegrees(Math.atan2(sumSin.toDouble(), sumCos.toDouble())).toFloat()
             if (smoothedHeadingDeg < 0) smoothedHeadingDeg += 360f
-
-            // If IDLE, just hold last heading or set to 0? Let's keep calculating but trust it less.
 
             engine.onSwingPlaneDetected(normal, floatArrayOf(hx, hy, hz), rawQuality, smoothedQuality, currentState, motionVariance, smoothedHeadingDeg)
         }
