@@ -171,6 +171,11 @@ class IndoorMapActivity : AppCompatActivity() {
                     runOnUiThread { visualizer.updatePosition(latLng); binding.trajectoryView.addPoint(x, y) }
                     pdrLog.add("${System.currentTimeMillis()},PDR,$stepCount,$headingDeg,$x,$y,$stepLength,$source,,")
                 }
+                override fun onPhoneHeading(headingDeg: Float) {
+                    runOnUiThread {
+                         binding.chartOutput.addPoint("Phone", android.graphics.Color.WHITE, headingDeg)
+                    }
+                }
                 override fun onDebugMessage(msg: String) {
                     runOnUiThread {
                         if (msg.startsWith("SWING_PLANE")) {
@@ -186,14 +191,15 @@ class IndoorMapActivity : AppCompatActivity() {
                                 // Chart 2: Confidence & Motion Variance
                                 binding.chartConfidence.addPoint("Raw", android.graphics.Color.YELLOW, rawQ)
                                 binding.chartConfidence.addPoint("Smooth", android.graphics.Color.GREEN, smoothQ)
-                                binding.chartConfidence.addPoint("Motion", android.graphics.Color.MAGENTA, motionVar) // New: Motion indicator
+                                binding.chartConfidence.addPoint("Motion", android.graphics.Color.MAGENTA, motionVar)
                                 binding.chartConfidence.addPoint("Thresh", android.graphics.Color.RED, 1.5f)
 
-                                // Chart 3: Heading in Degrees (0-360)
-                                binding.chartOutput.addPoint("Heading", android.graphics.Color.CYAN, headingDeg)
+                                // Chart 3: Heading in Degrees
+                                binding.chartOutput.addPoint("Swing", android.graphics.Color.CYAN, headingDeg)
+                                // binding.chartOutput.addPoint("Phone", android.graphics.Color.WHITE, phoneHeading) // TODO: Get phone heading
 
                                 val isSwinging = state == "SWINGING"
-                                binding.tvDebugInfo.text = "[$state] Motion:%.1f Raw:%.1f Smooth:%.1f Heading:%.0f°".format(motionVar, rawQ, smoothQ, headingDeg)
+                                binding.tvDebugInfo.text = "[$state] M:%.1f Q:%.1f H:%.0f°".format(motionVar, smoothQ, headingDeg)
                                 binding.tvDebugInfo.setBackgroundColor(if (isSwinging) 0xAA00AA00.toInt() else 0xAA550000.toInt())
 
                                 pdrLog.add("${System.currentTimeMillis()},SWING,$rawQ,$smoothQ,$headingDeg,$motionVar,${parts[1]},${parts[2]},${parts[3]},$state")

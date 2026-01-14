@@ -22,42 +22,22 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
         fun onPositionUpdated(x: Double, y: Double, latLng: LatLng, stepCount: Int, headingDeg: Int, stepLength: Double, source: String)
         fun onDebugMessage(msg: String)
         fun onRawData(ax: Float, ay: Float, az: Float)
+        fun onPhoneHeading(headingDeg: Float)
     }
 
-    enum class SwingSource { SCS, PHONE }
-    enum class SwingState { IDLE, SWINGING }
-
-    var listener: PdrListener? = null
-    var swingSource = SwingSource.SCS
-        set(value) {
-            field = value
-            swingDetector.clear()
-            listener?.onDebugMessage("Switched Swing Source to: $value")
-        }
-    var swingState = SwingState.IDLE
-        private set
-
-    private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-    private val swingDetector = SwingPlaneDetector(this)
-    private var isRunning = false
+    // ...
 
     fun start(startPoint: LatLng) {
         isRunning = true
         listener?.onDebugMessage("Swing Plane Prototype Started.")
         val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         sensorManager.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME)
+
+        val rot = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        sensorManager.registerListener(this, rot, SensorManager.SENSOR_DELAY_UI)
     }
 
-    fun stop() {
-        isRunning = false
-        sensorManager.unregisterListener(this)
-    }
-
-    fun setScsRawData(ax: Float, ay: Float, az: Float, gx: Float, gy: Float, gz: Float) {
-        if (swingSource == SwingSource.SCS) {
-            swingDetector.addSample(ax, ay, az)
-        }
-    }
+    // ...
 
     override fun onSensorChanged(event: SensorEvent?) {
         if (event == null) return
@@ -65,6 +45,15 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
             if (swingSource == SwingSource.PHONE) {
                 swingDetector.addSample(event.values[0], event.values[1], event.values[2])
             }
+        } else if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
+            // Always calculate Phone Heading for Debug Comparison
+            val rotationMatrix = FloatArray(9)
+            SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+            val orientation = FloatArray(3)
+            SensorManager.getOrientation(rotationMatrix, orientation)
+            var azimuth = Math.toDegrees(orientation[0].toDouble()).toFloat()
+            if (azimuth < 0) azimuth += 360f
+            listener?.onPhoneHeading(azimuth)
         }
     }
 
@@ -132,6 +121,15 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
         private var scorePtr = 0
         private var scoreHistFull = false
 
+        // Heading Smoothing & Stability
+        private val lastNormal = FloatArray(3)
+        private var hasLastNormal = false
+        private val HEADING_SMOOTH_WINDOW = 5 // 1 second @ 5Hz (Detection rate 5Hz)
+        private val headingCosBuf = FloatArray(HEADING_SMOOTH_WINDOW)
+        private val headingSinBuf = FloatArray(HEADING_SMOOTH_WINDOW)
+        private var headingPtr = 0
+        private var headingHistFull = false
+
         // State Machine
         private val STATE_TRANSITION_COUNT = 3
         private var currentState = SwingState.IDLE
@@ -184,12 +182,25 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
             } else {
                 val eigen = engine.solveEigen3x3(xx, xy, xz, yy, yz, zz)
                 normal = eigen.vectors[0]
+
+                // *** FIX SIGN FLIPPING ***
+                // Eigenvectors have arbitrary sign. Enforce temporal consistency.
+                if (hasLastNormal) {
+                    val dot = normal[0]*lastNormal[0] + normal[1]*lastNormal[1] + normal[2]*lastNormal[2]
+                    if (dot < 0) {
+                        normal[0] = -normal[0]
+                        normal[1] = -normal[1]
+                        normal[2] = -normal[2]
+                    }
+                }
+                lastNormal[0] = normal[0]; lastNormal[1] = normal[1]; lastNormal[2] = normal[2]
+                hasLastNormal = true
+
                 rawQuality = if (eigen.values[0] > 0.001f) eigen.values[2] / eigen.values[0] else 0f
-                // Cap raw quality to avoid crazy high values
                 if (rawQuality > 20f) rawQuality = 20f
             }
 
-            // Smoothing
+            // Smoothing Score
             scoreHistory[scorePtr] = rawQuality
             scorePtr = (scorePtr + 1) % SMOOTH_WINDOW
             if (scorePtr == 0) scoreHistFull = true
@@ -203,18 +214,36 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
             if (targetState == currentState) { transitionCounter = 0 }
             else { transitionCounter++; if (transitionCounter >= STATE_TRANSITION_COUNT) { currentState = targetState; transitionCounter = 0 } }
 
-            // Compute Heading (always)
+            // Compute Heading
             var hx = normal[1]*gravity[2] - normal[2]*gravity[1]
             var hy = normal[2]*gravity[0] - normal[0]*gravity[2]
             var hz = normal[0]*gravity[1] - normal[1]*gravity[0]
             val normH = sqrt(hx*hx + hy*hy + hz*hz)
             if (normH > 0.001f) { hx /= normH; hy /= normH; hz /= normH } else { hx = 0f; hy = 0f; hz = 0f }
 
-            // Convert heading to degrees (0-360)
+            // Raw Heading Degree
             var headingDeg = Math.toDegrees(Math.atan2(hy.toDouble(), hx.toDouble())).toFloat()
             if (headingDeg < 0) headingDeg += 360f
 
-            engine.onSwingPlaneDetected(normal, floatArrayOf(hx, hy, hz), rawQuality, smoothedQuality, currentState, motionVariance, headingDeg)
+            // *** FIX HEADING JITTER: Circular Smoothing ***
+            headingCosBuf[headingPtr] = cos(Math.toRadians(headingDeg.toDouble())).toFloat()
+            headingSinBuf[headingPtr] = sin(Math.toRadians(headingDeg.toDouble())).toFloat()
+            headingPtr = (headingPtr + 1) % HEADING_SMOOTH_WINDOW
+            if (headingPtr == 0) headingHistFull = true
+
+            var sumCos = 0f; var sumSin = 0f
+            val hCount = if (headingHistFull) HEADING_SMOOTH_WINDOW else headingPtr
+            // Use weighted average? Or simple average? Simple for now.
+            // Only smooth if we are somewhat stable (Score > 0.5) to avoid smoothing noise?
+            // Actually, keep it simple.
+            for(i in 0 until hCount) { sumCos += headingCosBuf[i]; sumSin += headingSinBuf[i] }
+
+            var smoothedHeadingDeg = Math.toDegrees(Math.atan2(sumSin.toDouble(), sumCos.toDouble())).toFloat()
+            if (smoothedHeadingDeg < 0) smoothedHeadingDeg += 360f
+
+            // If IDLE, just hold last heading or set to 0? Let's keep calculating but trust it less.
+
+            engine.onSwingPlaneDetected(normal, floatArrayOf(hx, hy, hz), rawQuality, smoothedQuality, currentState, motionVariance, smoothedHeadingDeg)
         }
     }
 }
