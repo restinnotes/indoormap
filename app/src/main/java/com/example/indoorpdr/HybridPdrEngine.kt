@@ -69,6 +69,10 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
     private val PITCH_STABILITY_THRESHOLD = 0.70f // ~40 deg
     private val PITCH_LEARNING_RATE = 0.01f
 
+    // Yaw Rate Monitoring (New!)
+    private var lastScsEtaRad = 0.0f
+    private val MAX_YAW_RATE_RAD_S = 2.5f // ~140 deg/s (Max normal turn speed)
+
     // Step Length Smoothing
     private val stepLengthHistory = mutableListOf<Double>()
     private val MAX_STEP_LENGTH = 0.75
@@ -118,26 +122,49 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
     fun setScsQuaternion(qx: Float, qy: Float, qz: Float, qw: Float) {
         val q = QuaternionUtils.Quaternion(qx, qy, qz, qw)
         val euler = QuaternionUtils.toEuler(q)
-        scsHeadingRad = euler.z // Yaw
-        lastScsUpdateTime = System.currentTimeMillis()
+        val currentYaw = euler.z
 
-        // Update Pitch Stability for Fusion Weight
+        // Calculate Yaw Rate
+        val now = System.currentTimeMillis()
+        val dt = (now - lastScsUpdateTime) / 1000.0f
+        var yawRate = 0.0f
+        if (dt > 0 && dt < 1.0) { // Valid dt
+             val diff = normalizeAngle(currentYaw - lastScsEtaRad)
+             yawRate = Math.abs(diff) / dt
+        }
+
+        scsHeadingRad = currentYaw
+        lastScsEtaRad = currentYaw // Store for next rate calc
+        lastScsUpdateTime = now
+
+        // --- Stability Check 1: Pitch ---
         val currentPitch = euler.y
+        var isPitchStable = false
         if (!hasScsPitchInit) {
             avgScsPitchRad = currentPitch
             hasScsPitchInit = true
+            isPitchStable = true
         } else {
-            // Update average only when relatively stable to learn "normal walking" pose
             val diff = Math.abs(normalizeAngle(currentPitch - avgScsPitchRad))
             if (diff < PITCH_STABILITY_THRESHOLD) {
                 avgScsPitchRad = avgScsPitchRad * (1 - PITCH_LEARNING_RATE) + currentPitch * PITCH_LEARNING_RATE
-                isScsUnstable = false
+                isPitchStable = true
             } else {
-                isScsUnstable = true
-                Log.w("HybridPdrEngine", "SCS Unstable! Pitch diff: ${Math.toDegrees(diff.toDouble()).toInt()}°")
+                isPitchStable = false
             }
         }
-        // Note: Actual stability check happens in handleAccel where we decide on weights
+
+        // --- Stability Check 2: Yaw Rate ---
+        val isYawStable = yawRate < MAX_YAW_RATE_RAD_S
+
+        // Final Decision
+        if (isPitchStable && isYawStable) {
+            isScsUnstable = false
+        } else {
+            isScsUnstable = true
+            if (!isYawStable) Log.w("HybridPdrEngine", "SCS Unstable! Yaw Rate: $yawRate rad/s")
+            if (!isPitchStable) Log.w("HybridPdrEngine", "SCS Unstable! Pitch Diff High")
+        }
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
