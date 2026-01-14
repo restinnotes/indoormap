@@ -25,7 +25,6 @@ class IndoorMapActivity : AppCompatActivity() {
     companion object {
         const val TAG = "IndoorMapActivity"
         const val REQUEST_BLE_PERMISSIONS = 1001
-        // Updated MAC from logs: C4:4D:5E:E3:AD:D7
         const val SCS_MAC_ADDRESS = "C4:4D:5E:E3:AD:D7"
         const val SCAN_TIMEOUT_MS = 20000L
     }
@@ -87,7 +86,7 @@ class IndoorMapActivity : AppCompatActivity() {
         if (requestCode == REQUEST_BLE_PERMISSIONS && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
             initBle()
         } else {
-            Toast.makeText(this, "BLE permissions denied. Using phone sensors only.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "BLE permissions denied.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -115,17 +114,10 @@ class IndoorMapActivity : AppCompatActivity() {
     private fun startBleScan() {
         if (isScanning) return
         isScanning = true
-        handler.postDelayed({
-            stopBleScan()
-            if (scsBleManager == null) {
-                // Log.w(TAG, "SCS device not found after scan timeout")
-                // Toast.makeText(this, "SCS not found.", Toast.LENGTH_LONG).show()
-            }
-        }, SCAN_TIMEOUT_MS)
+        handler.postDelayed({ stopBleScan() }, SCAN_TIMEOUT_MS)
 
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
         bleScanner?.startScan(null, settings, scanCallback)
-        Log.d(TAG, "BLE scan started")
     }
 
     @SuppressLint("MissingPermission")
@@ -133,7 +125,6 @@ class IndoorMapActivity : AppCompatActivity() {
         if (!isScanning) return
         isScanning = false
         bleScanner?.stopScan(scanCallback)
-        Log.d(TAG, "BLE scan stopped")
     }
 
     private var isConnecting = false
@@ -146,19 +137,16 @@ class IndoorMapActivity : AppCompatActivity() {
 
             if ((mac == SCS_MAC_ADDRESS.uppercase() || name.contains("BAN Z-NODE", ignoreCase = true)) && !isConnecting) {
                 isConnecting = true
-                Log.d(TAG, ">>> Target SCS found: $name [$mac]! Connecting...")
                 stopBleScan()
                 connectToScs(device)
             }
         }
-        override fun onScanFailed(errorCode: Int) {
-            isScanning = false
-        }
+        override fun onScanFailed(errorCode: Int) { isScanning = false }
     }
 
     @SuppressLint("MissingPermission")
     private fun connectToScs(device: BluetoothDevice) {
-        Toast.makeText(this, "Connecting to SCS: ${device.name ?: device.address}", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Connecting to SCS...", Toast.LENGTH_SHORT).show()
         scsBleManager = ScsBleManager(this) { scsData ->
             if (scsData.isRaw) {
                 pdrEngine?.setScsRawData(scsData.ax, scsData.ay, scsData.az, scsData.gx, scsData.gy, scsData.gz)
@@ -166,10 +154,7 @@ class IndoorMapActivity : AppCompatActivity() {
         }
         scsBleManager?.connect(device)
 
-        handler.postDelayed({
-            scsBleManager?.sendCentralConfig(device.address)
-        }, 2000)
-
+        handler.postDelayed({ scsBleManager?.sendCentralConfig(device.address) }, 2000)
         handler.postDelayed({
             scsBleManager?.startStreamingCentral(ScsBleManager.TYPE_RAW_DATA, 50)
             Toast.makeText(this, "SCS Raw Stream Started!", Toast.LENGTH_SHORT).show()
@@ -181,18 +166,15 @@ class IndoorMapActivity : AppCompatActivity() {
         binding.btnReset.setOnClickListener {
             binding.trajectoryView.clear()
             pdrLog.clear()
-            pdrLog.add("Timestamp,Type,Val1,Val2,Val3,Val4,Val5,Val6")
-            Toast.makeText(this, "Cleared", Toast.LENGTH_SHORT).show()
-
-            // Also reset charts
+            pdrLog.add("Timestamp,Type,Val1,Val2,Val3,Val4,Val5,Val6,Val7")
             binding.chartInput.clear()
             binding.chartConfidence.clear()
             binding.chartOutput.clear()
+            Toast.makeText(this, "Cleared", Toast.LENGTH_SHORT).show()
         }
 
         binding.btnToggleSource.setOnClickListener {
             if (pdrEngine == null) return@setOnClickListener
-            // Use property assignment to avoid platform clash with generated setter
             if (pdrEngine!!.swingSource == HybridPdrEngine.SwingSource.SCS) {
                 pdrEngine!!.swingSource = HybridPdrEngine.SwingSource.PHONE
                 binding.btnToggleSource.text = "Source: PHONE"
@@ -205,20 +187,17 @@ class IndoorMapActivity : AppCompatActivity() {
             binding.chartInput.clear()
         }
 
-        binding.btnSave.setOnClickListener {
-            saveToCsv()
-        }
-        pdrLog.add("Timestamp,Type,Val1,Val2,Val3,Val4,Val5,Val6")
+        binding.btnSave.setOnClickListener { saveToCsv() }
+        pdrLog.add("Timestamp,Type,Val1,Val2,Val3,Val4,Val5,Val6,Val7")
     }
 
     private fun saveToCsv() {
         if (pdrLog.size <= 1) return
         try {
             val fileName = "PDR_Log_${System.currentTimeMillis()}.csv"
-            val fileContents = pdrLog.joinToString("\n")
             val file = java.io.File(getExternalFilesDir(null), fileName)
-            file.writeText(fileContents)
-            Toast.makeText(this, "Saved: ${file.name}", Toast.LENGTH_SHORT).show()
+            file.printWriter().use { out -> pdrLog.forEach { out.println(it) } }
+            Toast.makeText(this, "Saved: ${file.name} (${pdrLog.size} lines)", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save CSV", e)
         }
@@ -234,9 +213,8 @@ class IndoorMapActivity : AppCompatActivity() {
             val visualizer = PdrVisualizer(map)
             pdrEngine = HybridPdrEngine(this)
 
-            // Init Charts
             binding.chartInput.init("Input Accel", -20f, 20f)
-            binding.chartConfidence.init("Swing Confidence", 0f, 10f)
+            binding.chartConfidence.init("Swing Confidence", 0f, 5f) // Adjusted range
             binding.chartConfidence.autoScale = true
             binding.chartOutput.init("Heading (Rad)", -3.14159f, 3.14159f)
 
@@ -247,41 +225,45 @@ class IndoorMapActivity : AppCompatActivity() {
                         binding.chartInput.addPoint("Ay", android.graphics.Color.GREEN, ay)
                         binding.chartInput.addPoint("Az", android.graphics.Color.BLUE, az)
                     }
-                    // Log RAW data (High Frequency)
                     if (pdrLog.size < 100000) {
-                        pdrLog.add("${System.currentTimeMillis()},RAW,$ax,$ay,$az,,,")
+                        pdrLog.add("${System.currentTimeMillis()},RAW,$ax,$ay,$az,,,,")
                     }
                 }
                 override fun onPositionUpdated(x: Double, y: Double, latLng: LatLng, stepCount: Int, headingDeg: Int, stepLength: Double, source: String) {
                     runOnUiThread {
                         visualizer.updatePosition(latLng)
                         binding.trajectoryView.addPoint(x, y)
-                        binding.tvDebugInfo.text = "[$source] Steps: $stepCount | Heading: $headingDeg"
                     }
-                    pdrLog.add("${System.currentTimeMillis()},PDR,$stepCount,$headingDeg,$x,$y,$stepLength,$source")
+                    pdrLog.add("${System.currentTimeMillis()},PDR,$stepCount,$headingDeg,$x,$y,$stepLength,$source,")
                 }
                 override fun onDebugMessage(msg: String) {
                     runOnUiThread {
                         if (msg.startsWith("SWING_PLANE")) {
+                            // New Format: SWING_PLANE,nx,ny,nz,hx,hy,hz,rawQ,smoothQ,state
                             val parts = msg.split(",")
-                            if (parts.size >= 8) {
-                                val quality = parts[7].toFloat()
-                                val hx = parts[4].toFloat()
-                                val hy = parts[5].toFloat()
-                                binding.chartConfidence.addPoint("Score", android.graphics.Color.GREEN, quality)
-                                binding.chartConfidence.addPoint("Threshold", android.graphics.Color.RED, 4.0f)
+                            if (parts.size >= 10) {
+                                val rawQ = parts[7].toFloatOrNull() ?: 0f
+                                val smoothQ = parts[8].toFloatOrNull() ?: 0f
+                                val state = parts[9]
+                                val hx = parts[4].toFloatOrNull() ?: 0f
+                                val hy = parts[5].toFloatOrNull() ?: 0f
+
+                                // Plot Raw and Smoothed
+                                binding.chartConfidence.addPoint("Raw", android.graphics.Color.YELLOW, rawQ)
+                                binding.chartConfidence.addPoint("Smooth", android.graphics.Color.GREEN, smoothQ)
+                                binding.chartConfidence.addPoint("Thresh", android.graphics.Color.RED, 1.5f)
 
                                 val headingRad = Math.atan2(hy.toDouble(), hx.toDouble()).toFloat()
                                 binding.chartOutput.addPoint("Heading", android.graphics.Color.CYAN, headingRad)
 
-                                binding.tvDebugInfo.text = "Score: %.1f | Heading: %.2f".format(quality, headingRad)
-                                binding.tvDebugInfo.setBackgroundColor(if (quality > 4.0f) 0xAA00AA00.toInt() else 0xAA550000.toInt())
+                                // Update Text and Background based on STATE
+                                val isSwinging = state == "SWINGING"
+                                binding.tvDebugInfo.text = "[$state] Raw:%.1f Smooth:%.1f H:%.2f".format(rawQ, smoothQ, headingRad)
+                                binding.tvDebugInfo.setBackgroundColor(if (isSwinging) 0xAA00AA00.toInt() else 0xAA550000.toInt())
 
-                                // LOG SWING DATA
-                                pdrLog.add("${System.currentTimeMillis()},SWING,$quality,$headingRad,${parts[1]},${parts[2]},${parts[3]}")
+                                // Log
+                                pdrLog.add("${System.currentTimeMillis()},SWING,$rawQ,$smoothQ,$headingRad,${parts[1]},${parts[2]},${parts[3]},$state")
                             }
-                        } else {
-                            // Log.d(TAG, msg)
                         }
                     }
                 }

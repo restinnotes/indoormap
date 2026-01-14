@@ -15,7 +15,7 @@ import kotlin.math.sqrt
  * Hybrid PDR Engine
  * - Step Detection: from Phone Accelerometer
  * - Heading: from SCS Quaternion (if connected), fallback to Phone Rotation Vector
- * - Swing Plane: PCA-based arm swing analysis
+ * - Swing Plane: PCA-based arm swing analysis with Smoothed Confidence
  */
 class HybridPdrEngine(private val context: Context) : SensorEventListener {
 
@@ -28,6 +28,7 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
 
     // --- Enums ---
     enum class SwingSource { SCS, PHONE }
+    enum class SwingState { IDLE, SWINGING }
 
     // --- Public Properties ---
     var listener: PdrListener? = null
@@ -37,6 +38,8 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
             swingDetector.clear()
             listener?.onDebugMessage("Switched Swing Source to: $value")
         }
+    var swingState = SwingState.IDLE
+        private set
 
     // --- Private Components ---
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -87,10 +90,11 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
 
     // --- Callbacks ---
 
-    fun onSwingPlaneDetected(normal: FloatArray, heading: FloatArray, quality: Float) {
+    fun onSwingPlaneDetected(normal: FloatArray, heading: FloatArray, rawQuality: Float, smoothedQuality: Float, state: SwingState) {
+        this.swingState = state
         // Send this data to UI for visualization
-        // Encoded as: "SWING_PLANE,nx,ny,nz,hx,hy,hz,quality"
-        listener?.onDebugMessage("SWING_PLANE,${normal[0]},${normal[1]},${normal[2]},${heading[0]},${heading[1]},${heading[2]},$quality")
+        // Encoded as: "SWING_PLANE,nx,ny,nz,hx,hy,hz,rawQ,smoothQ,state"
+        listener?.onDebugMessage("SWING_PLANE,${normal[0]},${normal[1]},${normal[2]},${heading[0]},${heading[1]},${heading[2]},$rawQuality,$smoothedQuality,$state")
     }
 
     // --- Internal Math Helpers ---
@@ -98,7 +102,6 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
     data class EigenResult(val values: FloatArray, val vectors: Array<FloatArray>)
 
     fun solveEigen3x3(xx: Float, xy: Float, xz: Float, yy: Float, yz: Float, zz: Float): EigenResult {
-        // Identity init
         val V = Array(3) { FloatArray(3) }
         V[0][0]=1f; V[1][1]=1f; V[2][2]=1f
         var d0=xx; var d1=yy; var d2=zz
@@ -151,20 +154,38 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
         return EigenResult(valArr, vecArr)
     }
 
-    // --- Inner Class: Swing Plane Detector ---
+    // --- Inner Class: Swing Plane Detector (with Smoothing & State Machine) ---
     class SwingPlaneDetector(val engine: HybridPdrEngine) {
-        private val WINDOW_SIZE = 100 // 2 seconds @ 50Hz
+        private val WINDOW_SIZE = 60 // 1.2 seconds @ 50Hz
         private val axBuffer = FloatArray(WINDOW_SIZE)
         private val ayBuffer = FloatArray(WINDOW_SIZE)
         private val azBuffer = FloatArray(WINDOW_SIZE)
         private var ptr = 0
         private var isFull = false
         private var lastProcessTime = 0L
-        private val PROCESS_INTERVAL_MS = 500L
+        private val PROCESS_INTERVAL_MS = 200L
+
+        // --- Smoothing ---
+        private val SMOOTH_WINDOW = 5
+        private val scoreHistory = FloatArray(SMOOTH_WINDOW)
+        private var scorePtr = 0
+        private var scoreHistFull = false
+
+        // --- State Machine ---
+        // To transition IDLE -> SWINGING: need N consecutive high-score frames
+        // To transition SWINGING -> IDLE: need N consecutive low-score frames
+        private val STATE_TRANSITION_COUNT = 3
+        private var currentState = SwingState.IDLE
+        private var transitionCounter = 0
+        private val STATE_THRESHOLD = 1.5f // Threshold for state machine (after smoothing)
 
         fun clear() {
             ptr = 0
             isFull = false
+            scorePtr = 0
+            scoreHistFull = false
+            currentState = SwingState.IDLE
+            transitionCounter = 0
         }
 
         fun addSample(ax: Float, ay: Float, az: Float) {
@@ -207,20 +228,42 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
 
             val eigen = engine.solveEigen3x3(xx, xy, xz, yy, yz, zz)
             val normal = eigen.vectors[0]
-            val quality = if (eigen.values[0] > 0) eigen.values[2] / eigen.values[0] else 999f
+            val rawQuality = if (eigen.values[0] > 0) eigen.values[2] / eigen.values[0] else 999f
 
-            if (quality > 4.0) {
-                var hx = normal[1]*gravity[2] - normal[2]*gravity[1]
-                var hy = normal[2]*gravity[0] - normal[0]*gravity[2]
-                var hz = normal[0]*gravity[1] - normal[1]*gravity[0]
-                val normH = sqrt(hx*hx + hy*hy + hz*hz)
-                if (normH > 0.001) {
-                    hx /= normH; hy /= normH; hz /= normH
-                    engine.onSwingPlaneDetected(normal, floatArrayOf(hx, hy, hz), quality)
-                }
+            // --- Smoothing ---
+            scoreHistory[scorePtr] = rawQuality
+            scorePtr = (scorePtr + 1) % SMOOTH_WINDOW
+            if (scorePtr == 0) scoreHistFull = true
+
+            val validCount = if (scoreHistFull) SMOOTH_WINDOW else scorePtr
+            var sumScore = 0f
+            for (i in 0 until validCount) sumScore += scoreHistory[i]
+            val smoothedQuality = if (validCount > 0) sumScore / validCount else rawQuality
+
+            // --- State Machine Update ---
+            val targetState = if (smoothedQuality > STATE_THRESHOLD) SwingState.SWINGING else SwingState.IDLE
+            if (targetState == currentState) {
+                transitionCounter = 0 // Reset counter if already in target state
             } else {
-                engine.onSwingPlaneDetected(floatArrayOf(0f,0f,0f), floatArrayOf(0f,0f,0f), quality)
+                transitionCounter++
+                if (transitionCounter >= STATE_TRANSITION_COUNT) {
+                    currentState = targetState
+                    transitionCounter = 0
+                }
             }
+
+            // --- Compute Heading (always, regardless of state) ---
+            var hx = normal[1]*gravity[2] - normal[2]*gravity[1]
+            var hy = normal[2]*gravity[0] - normal[0]*gravity[2]
+            var hz = normal[0]*gravity[1] - normal[1]*gravity[0]
+            val normH = sqrt(hx*hx + hy*hy + hz*hz)
+            if (normH > 0.001) {
+                hx /= normH; hy /= normH; hz /= normH
+            } else {
+                hx = 0f; hy = 0f; hz = 0f
+            }
+
+            engine.onSwingPlaneDetected(normal, floatArrayOf(hx, hy, hz), rawQuality, smoothedQuality, currentState)
         }
     }
 }
