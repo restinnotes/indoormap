@@ -193,11 +193,11 @@ class IndoorMapActivity : AppCompatActivity() {
         binding.btnToggleSource.setOnClickListener {
             if (pdrEngine == null) return@setOnClickListener
             if (pdrEngine!!.swingSource == HybridPdrEngine.SwingSource.SCS) {
-                pdrEngine!!.setSwingSource(HybridPdrEngine.SwingSource.PHONE)
+                pdrEngine!!.swingSource = HybridPdrEngine.SwingSource.PHONE
                 binding.btnToggleSource.text = "Source: PHONE"
                 binding.chartInput.init("Phone Accel", -20f, 20f)
             } else {
-                pdrEngine!!.setSwingSource(HybridPdrEngine.SwingSource.SCS)
+                pdrEngine!!.swingSource = HybridPdrEngine.SwingSource.SCS
                 binding.btnToggleSource.text = "Source: SCS"
                 binding.chartInput.init("SCS Accel", -20f, 20f)
             }
