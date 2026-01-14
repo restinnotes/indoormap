@@ -181,7 +181,7 @@ class IndoorMapActivity : AppCompatActivity() {
         binding.btnReset.setOnClickListener {
             binding.trajectoryView.clear()
             pdrLog.clear()
-            pdrLog.add("Timestamp,Steps,HeadingDeg,X,Y,StepLen,Source")
+            pdrLog.add("Timestamp,Type,Val1,Val2,Val3,Val4,Val5,Val6")
             Toast.makeText(this, "Cleared", Toast.LENGTH_SHORT).show()
 
             // Also reset charts
@@ -208,7 +208,7 @@ class IndoorMapActivity : AppCompatActivity() {
         binding.btnSave.setOnClickListener {
             saveToCsv()
         }
-        pdrLog.add("Timestamp,Steps,HeadingDeg,X,Y,StepLen,Source")
+        pdrLog.add("Timestamp,Type,Val1,Val2,Val3,Val4,Val5,Val6")
     }
 
     private fun saveToCsv() {
@@ -247,14 +247,18 @@ class IndoorMapActivity : AppCompatActivity() {
                         binding.chartInput.addPoint("Ay", android.graphics.Color.GREEN, ay)
                         binding.chartInput.addPoint("Az", android.graphics.Color.BLUE, az)
                     }
+                    // Log RAW data (High Frequency)
+                    if (pdrLog.size < 100000) {
+                        pdrLog.add("${System.currentTimeMillis()},RAW,$ax,$ay,$az,,,")
+                    }
                 }
                 override fun onPositionUpdated(x: Double, y: Double, latLng: LatLng, stepCount: Int, headingDeg: Int, stepLength: Double, source: String) {
                     runOnUiThread {
                         visualizer.updatePosition(latLng)
                         binding.trajectoryView.addPoint(x, y)
                         binding.tvDebugInfo.text = "[$source] Steps: $stepCount | Heading: $headingDeg"
-                        pdrLog.add("${System.currentTimeMillis()},$stepCount,$headingDeg,$x,$y,${"%.2f".format(stepLength)},$source")
                     }
+                    pdrLog.add("${System.currentTimeMillis()},PDR,$stepCount,$headingDeg,$x,$y,$stepLength,$source")
                 }
                 override fun onDebugMessage(msg: String) {
                     runOnUiThread {
@@ -272,6 +276,9 @@ class IndoorMapActivity : AppCompatActivity() {
 
                                 binding.tvDebugInfo.text = "Score: %.1f | Heading: %.2f".format(quality, headingRad)
                                 binding.tvDebugInfo.setBackgroundColor(if (quality > 4.0f) 0xAA00AA00.toInt() else 0xAA550000.toInt())
+
+                                // LOG SWING DATA
+                                pdrLog.add("${System.currentTimeMillis()},SWING,$quality,$headingRad,${parts[1]},${parts[2]},${parts[3]}")
                             }
                         } else {
                             // Log.d(TAG, msg)
