@@ -192,6 +192,7 @@ class IndoorMapActivity : AppCompatActivity() {
 
         binding.btnToggleSource.setOnClickListener {
             if (pdrEngine == null) return@setOnClickListener
+            // Use property assignment to avoid platform clash with generated setter
             if (pdrEngine!!.swingSource == HybridPdrEngine.SwingSource.SCS) {
                 pdrEngine!!.swingSource = HybridPdrEngine.SwingSource.PHONE
                 binding.btnToggleSource.text = "Source: PHONE"

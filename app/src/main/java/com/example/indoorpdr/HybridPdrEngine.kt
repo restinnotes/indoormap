@@ -32,6 +32,11 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
     // --- Public Properties ---
     var listener: PdrListener? = null
     var swingSource = SwingSource.SCS
+        set(value) {
+            field = value
+            swingDetector.clear()
+            listener?.onDebugMessage("Switched Swing Source to: $value")
+        }
 
     // --- Private Components ---
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -52,12 +57,6 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
     fun stop() {
         isRunning = false
         sensorManager.unregisterListener(this)
-    }
-
-    fun setSwingSource(source: SwingSource) {
-        this.swingSource = source
-        swingDetector.clear()
-        listener?.onDebugMessage("Switched Swing Source to: $source")
     }
 
     // --- Data Input ---
