@@ -35,6 +35,7 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
 
     // --- New Prototype: Swing Plane Detection ---
     private val swingDetector = SwingPlaneDetector(this)
+    private var isRunning = false
 
     // Call this from Activity with RAW data
     fun setScsRawData(ax: Float, ay: Float, az: Float, gx: Float, gy: Float, gz: Float) {
@@ -132,7 +133,7 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
             // 3. Eigen Decomposition (Jacobi Algorithm for 3x3)
             // We want the eigenvector with the SMALLEST eigenvalue (Normal to plane)
             // and LARGEST (Swing Tangent)
-            val eigen = solveEigen3x3(xx, xy, xz, yy, yz, zz)
+            val eigen = engine.solveEigen3x3(xx, xy, xz, yy, yz, zz)
 
             // Sort eigenvalues: e[0] <= e[1] <= e[2]
             // Normal = v[0] (Smallest variance - Left/Right)
@@ -155,11 +156,11 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
 
                 // Normalize Heading
                 val normH = sqrt(hx*hx + hy*hy + hz*hz)
-                if (normH > 0.001) {
-                    hx /= normH
-                    hy /= normH
-                    hz /= normH
-                    engine.onSwingPlaneDetected(normal, floatArrayOf(hx, hy, hz), quality)
+                if (normH > 0.001f) {
+                    val hxNorm = hx / normH
+                    val hyNorm = hy / normH
+                    val hzNorm = hz / normH
+                    engine.onSwingPlaneDetected(normal, floatArrayOf(hxNorm, hyNorm, hzNorm), quality)
                 }
             }
         }
@@ -170,7 +171,7 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
 
     // Using a simpler approximation or hardcoded Jacobi for 3x3
     // But since I cannot import external maths, I will copy a tiny solver here.
-    private fun solveEigen3x3(xx: Float, xy: Float, xz: Float, yy: Float, yz: Float, zz: Float): EigenResult {
+    fun solveEigen3x3(xx: Float, xy: Float, xz: Float, yy: Float, yz: Float, zz: Float): EigenResult {
         // Identity init
         val V = Array(3) { FloatArray(3) }
         V[0][0]=1f; V[1][1]=1f; V[2][2]=1f
@@ -254,152 +255,16 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
+    // Old PDR functions commented out - not used in Swing Plane prototype
+    /*
     private fun handleRotation(event: SensorEvent) {
-        val rotationMatrix = FloatArray(9)
-        SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-        val orientationAngles = FloatArray(3)
-        SensorManager.getOrientation(rotationMatrix, orientationAngles)
-        phoneHeadingRad = orientationAngles[0]
-        phoneAverager.add(phoneHeadingRad) // Add to averager
+        // Disabled for Swing Plane prototype
     }
 
     private fun handleAccel(event: SensorEvent) {
-        val x = event.values[0]
-        val y = event.values[1]
-        val z = event.values[2]
-        val magnitude = sqrt((x * x + y * y + z * z).toDouble())
-
-        // Track peaks/valleys for Weinberg
-        if (magnitude > currentStepMaxAccel) currentStepMaxAccel = magnitude
-        if (magnitude < currentStepMinAccel) currentStepMinAccel = magnitude
-
-        if (magnitude > STEP_THRESHOLD) {
-            val now = System.currentTimeMillis()
-            if (now - lastStepTime > MIN_STEP_DELAY_MS) {
-                // Step Detected!
-                lastStepTime = now
-                stepCount++
-
-                // Weinberg Step Length with smoothing
-                val accelRange = (currentStepMaxAccel - currentStepMinAccel).coerceAtLeast(1.0)
-                val rawStepLength = WEINBERG_K * Math.pow(accelRange, 0.25)
-                val stepLength = smoothStepLength(rawStepLength)
-
-                // Reset for next step
-                currentStepMaxAccel = 0.0
-                currentStepMinAccel = 100.0
-
-                // Determine Heading Source
-                val headingSource: String
-                val rawHeadingRad: Float
-
-                val scsAge = now - lastScsUpdateTime
-
-                // --- Dynamic Complementary Filter Fusion ---
-
-                val isScsAvailable = (scsHeadingRad != null && scsAge < 500)
-
-                if (isScsAvailable) {
-                    val scsH = scsHeadingRad!!
-                    val phoneH = phoneHeadingRad
-
-                    if (!isScsUnstable) {
-                        // Case A: SCS is Stable -> Trust SCS & Learn Offset
-                        rawHeadingRad = scsH
-                        headingSource = "SCS"
-
-                        // Update Offset using AVERAGES to cancel out swing noise
-                        val avgScs = scsAverager.getAverage()
-                        val avgPhone = phoneAverager.getAverage()
-                        val currentOffset = normalizeAngle(avgScs - avgPhone)
-
-                        if (!isOffsetInitialized) {
-                            headingOffsetRad = currentOffset
-                            isOffsetInitialized = true
-                        } else {
-                            // Smoothly update offset (EMA)
-                            // We use a smaller alpha because averaging is already slow
-                            val offsetDiff = normalizeAngle(currentOffset - headingOffsetRad)
-                            headingOffsetRad = normalizeAngle(headingOffsetRad + 0.02f * offsetDiff)
-                        }
-
-                    } else {
-                        // Case B: SCS is Unstable (Scratching) -> Use Phone + Offset
-                        if (isOffsetInitialized) {
-                            rawHeadingRad = normalizeAngle(phoneH + headingOffsetRad)
-                            headingSource = "Phone(Fused)"
-                        } else {
-                            // Fallback if offset not ready (rare)
-                            rawHeadingRad = phoneH
-                            headingSource = "Phone(Raw)"
-                        }
-                    }
-                } else {
-                    // Case C: SCS Not Connected -> Use Phone
-                    rawHeadingRad = phoneHeadingRad
-                    headingSource = "Phone"
-                }
-
-                // Apply HDR (45° Snap) to the fused heading
-                val finalHeadingRad = if (useHdr) snapToGrid(rawHeadingRad) else rawHeadingRad
-
-                updateLocation(stepLength, finalHeadingRad.toDouble(), headingSource)
-            }
-        } else {
-            // Between steps, keep tracking valleys
-            if (magnitude < currentStepMinAccel) currentStepMinAccel = magnitude
-        }
+        // Disabled for Swing Plane prototype
     }
-
-    /**
-     * Enhanced HDR: Snap to 45° grid (supports diagonal directions)
-     */
-    private fun snapToGrid(roughRad: Float): Float {
-        val step = Math.PI / 4.0  // 45 degrees instead of 90
-        val multiple = Math.round(roughRad / step)
-        val snapped = multiple * step
-        val diff = Math.abs(roughRad - snapped)
-        return if (diff < HDR_TOLERANCE_RAD) snapped.toFloat() else roughRad
-    }
-
-    /**
-     * Normalize angle to [-π, π] range
-     */
-    private fun normalizeAngle(angle: Float): Float {
-        var normalized = angle
-        while (normalized > Math.PI) normalized -= (2 * Math.PI).toFloat()
-        while (normalized < -Math.PI) normalized += (2 * Math.PI).toFloat()
-        return normalized
-    }
-
-    /**
-     * Step Length Smoothing: Reduces step length variance
-     */
-    private fun smoothStepLength(raw: Double): Double {
-        val clamped = raw.coerceIn(MIN_STEP_LENGTH, MAX_STEP_LENGTH)
-        stepLengthHistory.add(clamped)
-        if (stepLengthHistory.size > STEP_HISTORY_SIZE) {
-            stepLengthHistory.removeAt(0)
-        }
-        return stepLengthHistory.average()
-    }
-
-    private fun updateLocation(stepLength: Double, headingRad: Double, source: String) {
-        val dY = stepLength * cos(headingRad)
-        val dX = stepLength * sin(headingRad)
-
-        currentY += dY
-        currentX += dX
-
-        val dLat = (dY / EARTH_RADIUS) * (180.0 / Math.PI)
-        val dLng = (dX / (EARTH_RADIUS * cos(currentLat * Math.PI / 180.0))) * (180.0 / Math.PI)
-
-        currentLat += dLat
-        currentLng += dLng
-
-        val headingDeg = Math.toDegrees(headingRad).toInt()
-        listener?.onPositionUpdated(currentX, currentY, LatLng(currentLat, currentLng), stepCount, headingDeg, stepLength, source)
-    }
+    */
 
     /**
      * Circular Buffer to calculate Mean Angle

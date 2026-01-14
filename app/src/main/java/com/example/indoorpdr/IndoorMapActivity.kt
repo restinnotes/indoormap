@@ -63,7 +63,6 @@ class IndoorMapActivity : AppCompatActivity() {
         mapView.onCreate(savedInstanceState)
 
         initMap()
-        setupControls()
         requestBlePermissions()
     }
 
