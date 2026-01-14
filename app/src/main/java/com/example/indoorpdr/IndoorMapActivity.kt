@@ -180,62 +180,36 @@ class IndoorMapActivity : AppCompatActivity() {
         Toast.makeText(this, "Connecting to SCS: ${device.name ?: device.address}", Toast.LENGTH_SHORT).show()
 
         scsBleManager = ScsBleManager(this) { scsData ->
-            // Feed quaternion to PDR Engine
-            if (!scsData.isRaw) {
-                pdrEngine?.setScsQuaternion(scsData.qx, scsData.qy, scsData.qz, scsData.qw)
-                Log.v(TAG, "SCS Quat: qw=${scsData.qw}, qx=${scsData.qx}, qy=${scsData.qy}, qz=${scsData.qz}")
+            // Feed Raw Data to PDR Engine for Swing Plane Detection
+            if (scsData.isRaw) {
+                pdrEngine?.setScsRawData(
+                    scsData.ax, scsData.ay, scsData.az,
+                    scsData.gx, scsData.gy, scsData.gz
+                )
+                // Log.v(TAG, "SCS Raw: ax=${scsData.ax}, ay=${scsData.ay}")
+            } else {
+                // If Quat still comes for some reason
+                // pdrEngine?.setScsQuaternion(...) // Disabled
             }
         }
         scsBleManager?.connect(device)
 
-        // Step 1: Send Central Configuration (Protocol V3 Central Mode)
-        // Matches Python: Connect -> Wait ~2s -> Config -> Wait ~3s -> Start
+        // Step 1: Send Central Configuration
         handler.postDelayed({
             Log.d(TAG, "Sending Central Config (MAC: ${device.address})...")
             scsBleManager?.sendCentralConfig(device.address)
         }, 2000)
 
-        // Step 2: Start Streaming (Fresh Start)
+        // Step 2: Start Streaming RAW DATA (Type 125)
         handler.postDelayed({
-            Log.d(TAG, "Starting SCS Quaternion streaming (Central Mode @ 50Hz)...")
-            scsBleManager?.startStreamingCentral(ScsBleManager.TYPE_QUATERNION, 50)
-            Toast.makeText(this, "SCS streaming started!", Toast.LENGTH_SHORT).show()
+            Log.d(TAG, "Starting SCS RAW stream (Central Mode @ 50Hz)...")
+            // CHANGE: Request TYPE_RAW_DATA (125) instead of QUATERNION
+            scsBleManager?.startStreamingCentral(ScsBleManager.TYPE_RAW_DATA, 50)
+            Toast.makeText(this, "SCS Raw Stream Started!", Toast.LENGTH_SHORT).show()
         }, 5000)
     }
 
-    private fun setupControls() {
-        binding.btnReset.setOnClickListener {
-            binding.trajectoryView.clear()
-            pdrLog.clear()
-            pdrLog.add("Timestamp,Steps,HeadingDeg,X,Y,StepLen,Source")
-            Toast.makeText(this, "Cleared", Toast.LENGTH_SHORT).show()
-        }
-
-        binding.btnSave.setOnClickListener {
-            saveToCsv()
-        }
-
-        pdrLog.add("Timestamp,Steps,HeadingDeg,X,Y,StepLen,Source")
-    }
-
-    private fun saveToCsv() {
-        if (pdrLog.size <= 1) {
-            Toast.makeText(this, "No data to save", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        try {
-            val fileName = "PDR_Log_${System.currentTimeMillis()}.csv"
-            val fileContents = pdrLog.joinToString("\n")
-            val file = java.io.File(getExternalFilesDir(null), fileName)
-            file.writeText(fileContents)
-            Toast.makeText(this, "Saved to: ${file.name}", Toast.LENGTH_LONG).show()
-            Log.d(TAG, "Log saved: ${file.absolutePath}")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to save CSV", e)
-            Toast.makeText(this, "Save Failed: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
+    // ...
 
     private fun initMap() {
         if (aMap == null) {
@@ -254,16 +228,30 @@ class IndoorMapActivity : AppCompatActivity() {
                     runOnUiThread {
                         visualizer.updatePosition(latLng)
                         binding.trajectoryView.addPoint(x, y)
-
-                        // Show source (Phone or SCS) in debug info
-                        binding.tvDebugInfo.text = "[$source] Steps: $stepCount | Heading: $headingDeg° | X: ${"%.1f".format(x)} Y: ${"%.1f".format(y)}"
-
-                        pdrLog.add("${System.currentTimeMillis()},$stepCount,$headingDeg,$x,$y,${"%.2f".format(stepLength)},$source")
+                        // Standard Debug Info
+                        // binding.tvDebugInfo.text = ... (Overwritten by Swing Info below if active)
                     }
                 }
 
                 override fun onDebugMessage(msg: String) {
-                    runOnUiThread { Log.d(TAG, msg) }
+                    runOnUiThread {
+                        if (msg.startsWith("SWING_PLANE")) {
+                            // Parse: SWING_PLANE,nx,ny,nz,hx,hy,hz
+                            val parts = msg.split(",")
+                            if (parts.size >= 7) {
+                                val nx = "%.2f".format(parts[1].toFloat())
+                                val ny = "%.2f".format(parts[2].toFloat())
+                                val nz = "%.2f".format(parts[3].toFloat())
+                                val hx = "%.2f".format(parts[4].toFloat())
+                                val hy = "%.2f".format(parts[5].toFloat())
+
+                                binding.tvDebugInfo.text = "SWING DETECTED!\nNormal: ($nx, $ny, $nz)\nHeading Vec: ($hx, $hy)\n(Walk to test stability)"
+                                binding.tvDebugInfo.setBackgroundColor(0xAA00AA00.toInt()) // Green background
+                            }
+                        } else {
+                             Log.d(TAG, msg)
+                        }
+                    }
                 }
             }
 
