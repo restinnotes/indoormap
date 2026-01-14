@@ -216,49 +216,28 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
                 val headingSource: String
                 val rawHeadingRad: Float
 
-                val scsAge = now - lastScsUpdateTime
+                // [MODIFIED] Fusion Disabled by User Request.
+                // Phone Rotation Vector is trusted more than SCS for heading.
 
-                // --- Dynamic Complementary Filter Fusion ---
+                // val scsAge = now - lastScsUpdateTime
+                // val isScsAvailable = (scsHeadingRad != null && scsAge < 500)
 
-                val isScsAvailable = (scsHeadingRad != null && scsAge < 500)
+                // Force Phone Heading
+                rawHeadingRad = phoneHeadingRad
+                headingSource = "PhoneOnly"
 
+                /*
+                // --- Dynamic Complementary Filter Fusion (DISABLED) ---
                 if (isScsAvailable) {
                     val scsH = scsHeadingRad!!
                     val phoneH = phoneHeadingRad
-
                     if (!isScsUnstable) {
-                        // Case A: SCS is Stable -> Trust SCS & Learn Offset
-                        rawHeadingRad = scsH
-                        headingSource = "SCS"
-
-                        // Update Offset (SCS - Phone)
-                        val currentOffset = normalizeAngle(scsH - phoneH)
-
-                        if (!isOffsetInitialized) {
-                            headingOffsetRad = currentOffset
-                            isOffsetInitialized = true
-                        } else {
-                            // Smoothly update offset (EMA)
-                            val offsetDiff = normalizeAngle(currentOffset - headingOffsetRad)
-                            headingOffsetRad = normalizeAngle(headingOffsetRad + OFFSET_SMOOTHING_ALPHA * offsetDiff)
-                        }
-
+                        // ...
                     } else {
-                        // Case B: SCS is Unstable (Scratching) -> Use Phone + Offset
-                        if (isOffsetInitialized) {
-                            rawHeadingRad = normalizeAngle(phoneH + headingOffsetRad)
-                            headingSource = "Phone(Fused)"
-                        } else {
-                            // Fallback if offset not ready (rare)
-                            rawHeadingRad = phoneH
-                            headingSource = "Phone(Raw)"
-                        }
+                        // ...
                     }
-                } else {
-                    // Case C: SCS Not Connected -> Use Phone
-                    rawHeadingRad = phoneHeadingRad
-                    headingSource = "Phone"
                 }
+                */
 
                 // Apply HDR (45° Snap) to the fused heading
                 val finalHeadingRad = if (useHdr) snapToGrid(rawHeadingRad) else rawHeadingRad
