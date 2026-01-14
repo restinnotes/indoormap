@@ -65,10 +65,9 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
 
     // New Listener Method
     fun onSwingPlaneDetected(normal: FloatArray, heading: FloatArray, quality: Float) {
-        listener?.onDebugMessage("Swing Detected! Quality: %.2f".format(quality))
         // Send this data to UI for visualization
-        // Encoded as: "SWING_PLANE,nx,ny,nz,hx,hy,hz"
-        listener?.onDebugMessage("SWING_PLANE,${normal[0]},${normal[1]},${normal[2]},${heading[0]},${heading[1]},${heading[2]}")
+        // Encoded as: "SWING_PLANE,nx,ny,nz,hx,hy,hz,quality"
+        listener?.onDebugMessage("SWING_PLANE,${normal[0]},${normal[1]},${normal[2]},${heading[0]},${heading[1]},${heading[2]},$quality")
     }
 
     // --- Inner Class: Swing Plane Detector ---
@@ -156,12 +155,16 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
 
                 // Normalize Heading
                 val normH = sqrt(hx*hx + hy*hy + hz*hz)
-                if (normH > 0.001f) {
-                    val hxNorm = hx / normH
-                    val hyNorm = hy / normH
-                    val hzNorm = hz / normH
-                    engine.onSwingPlaneDetected(normal, floatArrayOf(hxNorm, hyNorm, hzNorm), quality)
+                if (normH > 0.001) {
+                    hx /= normH
+                    hy /= normH
+                    hz /= normH
+                    engine.onSwingPlaneDetected(normal, floatArrayOf(hx, hy, hz), quality)
                 }
+            } else {
+                // Low quality - report it anyway for the plot (so we see the dip)
+                // But mark it as non-planar
+                engine.onSwingPlaneDetected(floatArrayOf(0f,0f,0f), floatArrayOf(0f,0f,0f), quality)
             }
         }
     }

@@ -39,6 +39,49 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <!-- Debug Dashboard Overlay -->
+    <LinearLayout
+        android:id="@+id/ll_dashboard"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:orientation="vertical"
+        android:visibility="visible"
+        android:padding="8dp"
+        app:layout_constraintHeight_percent="0.6"
+        app:layout_constraintTop_toBottomOf="@id/tv_debug_info"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Chart 1: Raw Accel (Input) -->
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                  android:text="Raw SCS Accel (Input)" android:textColor="#FFFF00"/>
+        <com.example.indoorpdr.SimpleLineChart
+            android:id="@+id/chart_input"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginBottom="4dp"/>
+
+        <!-- Chart 2: Swing Confidence (Score) -->
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                  android:text="Swing Confidence (Eigen Ratio > 4.0 is Good)" android:textColor="#00FF00"/>
+        <com.example.indoorpdr.SimpleLineChart
+            android:id="@+id/chart_confidence"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginBottom="4dp"/>
+
+        <!-- Chart 3: Heading Output -->
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                  android:text="Heading (Rad) & Status" android:textColor="#00FFFF"/>
+        <com.example.indoorpdr.SimpleLineChart
+            android:id="@+id/chart_output"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"/>
+    </LinearLayout>
+
     <LinearLayout
         android:id="@+id/ll_controls"
         android:layout_width="match_parent"

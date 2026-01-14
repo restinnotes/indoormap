@@ -181,14 +181,19 @@ class IndoorMapActivity : AppCompatActivity() {
         scsBleManager = ScsBleManager(this) { scsData ->
             // Feed Raw Data to PDR Engine for Swing Plane Detection
             if (scsData.isRaw) {
+                // Plot Input Data (Raw Accel)
+                runOnUiThread {
+                    binding.chartInput.addPoint("Ax", android.graphics.Color.RED, scsData.ax)
+                    binding.chartInput.addPoint("Ay", android.graphics.Color.GREEN, scsData.ay)
+                    binding.chartInput.addPoint("Az", android.graphics.Color.BLUE, scsData.az)
+                }
+
                 pdrEngine?.setScsRawData(
                     scsData.ax, scsData.ay, scsData.az,
                     scsData.gx, scsData.gy, scsData.gz
                 )
-                // Log.v(TAG, "SCS Raw: ax=${scsData.ax}, ay=${scsData.ay}")
             } else {
-                // If Quat still comes for some reason
-                // pdrEngine?.setScsQuaternion(...) // Disabled
+                // ...
             }
         }
         scsBleManager?.connect(device)
@@ -222,30 +227,44 @@ class IndoorMapActivity : AppCompatActivity() {
             val visualizer = PdrVisualizer(map)
             pdrEngine = HybridPdrEngine(this)
 
+            // Initialize Charts
+            binding.chartInput.init("Input Accel (m/s^2)", -20f, 20f)
+            binding.chartConfidence.init("Swing Confidence", 0f, 10f)
+            binding.chartOutput.init("Swing Heading (Rad)", -3.14159f, 3.14159f) // -PI to PI
+
             pdrEngine?.listener = object : HybridPdrEngine.PdrListener {
                 override fun onPositionUpdated(x: Double, y: Double, latLng: LatLng, stepCount: Int, headingDeg: Int, stepLength: Double, source: String) {
                     runOnUiThread {
                         visualizer.updatePosition(latLng)
                         binding.trajectoryView.addPoint(x, y)
-                        // Standard Debug Info
-                        // binding.tvDebugInfo.text = ... (Overwritten by Swing Info below if active)
+                        // Binding Debug Info text is handled below via Swing updates for now
+                        // pdrLog.add(...) - Keep if needed
                     }
                 }
 
                 override fun onDebugMessage(msg: String) {
                     runOnUiThread {
                         if (msg.startsWith("SWING_PLANE")) {
-                            // Parse: SWING_PLANE,nx,ny,nz,hx,hy,hz
+                            // Format: SWING_PLANE,nx,ny,nz,hx,hy,hz,quality
                             val parts = msg.split(",")
-                            if (parts.size >= 7) {
-                                val nx = "%.2f".format(parts[1].toFloat())
-                                val ny = "%.2f".format(parts[2].toFloat())
-                                val nz = "%.2f".format(parts[3].toFloat())
-                                val hx = "%.2f".format(parts[4].toFloat())
-                                val hy = "%.2f".format(parts[5].toFloat())
+                            if (parts.size >= 8) {
+                                val quality = parts[7].toFloat()
+                                val hx = parts[4].toFloat()
+                                val hy = parts[5].toFloat()
 
-                                binding.tvDebugInfo.text = "SWING DETECTED!\nNormal: ($nx, $ny, $nz)\nHeading Vec: ($hx, $hy)\n(Walk to test stability)"
-                                binding.tvDebugInfo.setBackgroundColor(0xAA00AA00.toInt()) // Green background
+                                // Plot 2: Confidence
+                                binding.chartConfidence.addPoint("Score", android.graphics.Color.GREEN, quality)
+                                binding.chartConfidence.addPoint("Threshold", android.graphics.Color.RED, 4.0f) // Ref line
+
+                                // Plot 3: Heading (Just X component for now or Atan2)
+                                // Let's plot the computed Heading Angle (Rad)
+                                val headingRad = Math.atan2(hy.toDouble(), hx.toDouble()).toFloat()
+                                binding.chartOutput.addPoint("SwingHeading", android.graphics.Color.CYAN, headingRad)
+
+                                // Update Text
+                                binding.tvDebugInfo.text = "Swing Score: %.1f\nHeading: %.2f".format(quality, headingRad)
+                                if (quality > 4.0f) binding.tvDebugInfo.setBackgroundColor(0xAA00AA00.toInt())
+                                else binding.tvDebugInfo.setBackgroundColor(0xAA550000.toInt())
                             }
                         } else {
                              Log.d(TAG, msg)
