@@ -57,9 +57,17 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
     var useHdr = true
     private val HDR_TOLERANCE_RAD = 0.26f // ~15 degrees
 
-    // Heading Smoothing - Low-pass filter to reduce jitter BEFORE HDR snap
-    private var smoothedHeadingRad: Float? = null
-    private val HEADING_SMOOTHING_ALPHA = 0.3f  // Lower = more smoothing (0.0-1.0)
+    // --- Adaptive Fusion State (Dynamic Complementary Filter) ---
+    private var headingOffsetRad = 0.0f // SCS - Phone (Alignment)
+    private var isOffsetInitialized = false
+    private val OFFSET_SMOOTHING_ALPHA = 0.05f
+
+    // Stability Monitoring
+    private var avgScsPitchRad = 0.0f
+    private var isScsUnstable = false
+    private var hasScsPitchInit = false
+    private val PITCH_STABILITY_THRESHOLD = 0.70f // ~40 deg
+    private val PITCH_LEARNING_RATE = 0.01f
 
     // Step Length Smoothing
     private val stepLengthHistory = mutableListOf<Double>()
@@ -80,8 +88,13 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
         stepCount = 0
 
         // Reset enhanced PDR state
-        smoothedHeadingRad = null
         stepLengthHistory.clear()
+
+        // Reset Fusion State
+        isOffsetInitialized = false
+        headingOffsetRad = 0.0f
+        hasScsPitchInit = false
+        avgScsPitchRad = 0.0f
 
         val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         val rotation = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
@@ -107,6 +120,24 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
         val euler = QuaternionUtils.toEuler(q)
         scsHeadingRad = euler.z // Yaw
         lastScsUpdateTime = System.currentTimeMillis()
+
+        // Update Pitch Stability for Fusion Weight
+        val currentPitch = euler.y
+        if (!hasScsPitchInit) {
+            avgScsPitchRad = currentPitch
+            hasScsPitchInit = true
+        } else {
+            // Update average only when relatively stable to learn "normal walking" pose
+            val diff = Math.abs(normalizeAngle(currentPitch - avgScsPitchRad))
+            if (diff < PITCH_STABILITY_THRESHOLD) {
+                avgScsPitchRad = avgScsPitchRad * (1 - PITCH_LEARNING_RATE) + currentPitch * PITCH_LEARNING_RATE
+                isScsUnstable = false
+            } else {
+                isScsUnstable = true
+                Log.w("HybridPdrEngine", "SCS Unstable! Pitch diff: ${Math.toDegrees(diff.toDouble()).toInt()}°")
+            }
+        }
+        // Note: Actual stability check happens in handleAccel where we decide on weights
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
@@ -159,20 +190,51 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
                 val rawHeadingRad: Float
 
                 val scsAge = now - lastScsUpdateTime
-                if (scsHeadingRad != null && scsAge < 500) {
-                    // SCS data is fresh (< 500ms old)
-                    rawHeadingRad = scsHeadingRad!!
-                    headingSource = "SCS"
+
+                // --- Dynamic Complementary Filter Fusion ---
+
+                val isScsAvailable = (scsHeadingRad != null && scsAge < 500)
+
+                if (isScsAvailable) {
+                    val scsH = scsHeadingRad!!
+                    val phoneH = phoneHeadingRad
+
+                    if (!isScsUnstable) {
+                        // Case A: SCS is Stable -> Trust SCS & Learn Offset
+                        rawHeadingRad = scsH
+                        headingSource = "SCS"
+
+                        // Update Offset (SCS - Phone)
+                        val currentOffset = normalizeAngle(scsH - phoneH)
+
+                        if (!isOffsetInitialized) {
+                            headingOffsetRad = currentOffset
+                            isOffsetInitialized = true
+                        } else {
+                            // Smoothly update offset (EMA)
+                            val offsetDiff = normalizeAngle(currentOffset - headingOffsetRad)
+                            headingOffsetRad = normalizeAngle(headingOffsetRad + OFFSET_SMOOTHING_ALPHA * offsetDiff)
+                        }
+
+                    } else {
+                        // Case B: SCS is Unstable (Scratching) -> Use Phone + Offset
+                        if (isOffsetInitialized) {
+                            rawHeadingRad = normalizeAngle(phoneH + headingOffsetRad)
+                            headingSource = "Phone(Fused)"
+                        } else {
+                            // Fallback if offset not ready (rare)
+                            rawHeadingRad = phoneH
+                            headingSource = "Phone(Raw)"
+                        }
+                    }
                 } else {
+                    // Case C: SCS Not Connected -> Use Phone
                     rawHeadingRad = phoneHeadingRad
                     headingSource = "Phone"
                 }
 
-                // Apply heading smoothing FIRST to reduce jitter
-                val smoothedHeading = smoothHeading(rawHeadingRad)
-
-                // Then apply HDR snap to the smoothed heading
-                val finalHeadingRad = if (useHdr) snapToGrid(smoothedHeading) else smoothedHeading
+                // Apply HDR (45° Snap) to the fused heading
+                val finalHeadingRad = if (useHdr) snapToGrid(rawHeadingRad) else rawHeadingRad
 
                 updateLocation(stepLength, finalHeadingRad.toDouble(), headingSource)
             }
@@ -191,28 +253,6 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
         val snapped = multiple * step
         val diff = Math.abs(roughRad - snapped)
         return if (diff < HDR_TOLERANCE_RAD) snapped.toFloat() else roughRad
-    }
-
-    /**
-     * Heading Smoothing: Low-pass filter to reduce jitter before HDR snap
-     * Uses exponential moving average with proper angle wrapping
-     */
-    private fun smoothHeading(rawHeading: Float): Float {
-        val prev = smoothedHeadingRad
-
-        if (prev == null) {
-            smoothedHeadingRad = rawHeading
-            return rawHeading
-        }
-
-        // Calculate difference with angle wrapping
-        val diff = normalizeAngle(rawHeading - prev)
-
-        // Apply exponential smoothing
-        val smoothed = normalizeAngle(prev + HEADING_SMOOTHING_ALPHA * diff)
-        smoothedHeadingRad = smoothed
-
-        return smoothed
     }
 
     /**
