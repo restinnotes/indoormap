@@ -22,9 +22,22 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
     interface PdrListener {
         fun onPositionUpdated(x: Double, y: Double, latLng: LatLng, stepCount: Int, headingDeg: Int, stepLength: Double, source: String)
         fun onDebugMessage(msg: String)
+        fun onRawData(ax: Float, ay: Float, az: Float)
     }
 
     var listener: PdrListener? = null
+
+    // ...
+
+    // --- Inner Class: Swing Plane Detector ---
+    class SwingPlaneDetector(val engine: HybridPdrEngine) {
+        // ...
+        fun addSample(ax: Float, ay: Float, az: Float) {
+            // Echo raw data to listener for UI plotting
+            engine.listener?.onRawData(ax, ay, az)
+
+            axBuffer[ptr] = ax
+            // ...
 
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
 
@@ -81,7 +94,13 @@ class HybridPdrEngine(private val context: Context) : SensorEventListener {
         private var lastProcessTime = 0L
         private val PROCESS_INTERVAL_MS = 500L // Run PCA every 0.5s
 
+        fun clear() {
+            ptr = 0
+            isFull = false
+        }
+
         fun addSample(ax: Float, ay: Float, az: Float) {
+            engine.listener?.onRawData(ax, ay, az)
             axBuffer[ptr] = ax
             ayBuffer[ptr] = ay
             azBuffer[ptr] = az

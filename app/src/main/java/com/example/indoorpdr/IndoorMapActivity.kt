@@ -181,19 +181,11 @@ class IndoorMapActivity : AppCompatActivity() {
         scsBleManager = ScsBleManager(this) { scsData ->
             // Feed Raw Data to PDR Engine for Swing Plane Detection
             if (scsData.isRaw) {
-                // Plot Input Data (Raw Accel)
-                runOnUiThread {
-                    binding.chartInput.addPoint("Ax", android.graphics.Color.RED, scsData.ax)
-                    binding.chartInput.addPoint("Ay", android.graphics.Color.GREEN, scsData.ay)
-                    binding.chartInput.addPoint("Az", android.graphics.Color.BLUE, scsData.az)
-                }
-
+                // Plotting is handled via PdrListener callbacks
                 pdrEngine?.setScsRawData(
                     scsData.ax, scsData.ay, scsData.az,
                     scsData.gx, scsData.gy, scsData.gz
                 )
-            } else {
-                // ...
             }
         }
         scsBleManager?.connect(device)
@@ -207,12 +199,131 @@ class IndoorMapActivity : AppCompatActivity() {
         // Step 2: Start Streaming RAW DATA (Type 125)
         handler.postDelayed({
             Log.d(TAG, "Starting SCS RAW stream (Central Mode @ 50Hz)...")
-            // CHANGE: Request TYPE_RAW_DATA (125) instead of QUATERNION
             scsBleManager?.startStreamingCentral(ScsBleManager.TYPE_RAW_DATA, 50)
             Toast.makeText(this, "SCS Raw Stream Started!", Toast.LENGTH_SHORT).show()
         }, 5000)
     }
 
+    private fun setupControls() {
+        binding.btnReset.setOnClickListener {
+            binding.trajectoryView.clear()
+            pdrLog.clear()
+            pdrLog.add("Timestamp,Steps,HeadingDeg,X,Y,StepLen,Source")
+            Toast.makeText(this, "Cleared", Toast.LENGTH_SHORT).show()
+        }
+
+        binding.btnToggleSource.setOnClickListener {
+            if (pdrEngine == null) return@setOnClickListener
+            // Toggle Logic
+            if (pdrEngine!!.swingSource == HybridPdrEngine.SwingSource.SCS) {
+                pdrEngine!!.setSwingSource(HybridPdrEngine.SwingSource.PHONE)
+                binding.btnToggleSource.text = "Source: PHONE"
+                binding.chartInput.init("Phone Accel", -20f, 20f)
+            } else {
+                pdrEngine!!.setSwingSource(HybridPdrEngine.SwingSource.SCS)
+                binding.btnToggleSource.text = "Source: SCS"
+                binding.chartInput.init("SCS Accel", -20f, 20f)
+            }
+            binding.chartInput.clear()
+        }
+
+        binding.btnSave.setOnClickListener {
+            saveToCsv()
+        }
+
+        pdrLog.add("Timestamp,Steps,HeadingDeg,X,Y,StepLen,Source")
+    }
+
+    private fun saveToCsv() {
+        if (pdrLog.size <= 1) {
+            Toast.makeText(this, "No data to save", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        try {
+            val fileName = "PDR_Log_${System.currentTimeMillis()}.csv"
+            val fileContents = pdrLog.joinToString("\n")
+            val file = java.io.File(getExternalFilesDir(null), fileName)
+            file.writeText(fileContents)
+            Toast.makeText(this, "Saved to: ${file.name}", Toast.LENGTH_LONG).show()
+            Log.d(TAG, "Log saved: ${file.absolutePath}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save CSV", e)
+            Toast.makeText(this, "Save Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun initMap() {
+        if (aMap == null) {
+            aMap = mapView.map
+        }
+
+        aMap?.let { map ->
+            map.moveCamera(CameraUpdateFactory.newLatLngZoom(START_LAT_LNG, 18f))
+            map.uiSettings.isScaleControlsEnabled = true
+
+            val visualizer = PdrVisualizer(map)
+            pdrEngine = HybridPdrEngine(this)
+
+            // Initialize Charts
+            binding.chartInput.init("Input Accel (m/s^2)", -20f, 20f)
+            binding.chartConfidence.init("Swing Confidence", 0f, 10f)
+            binding.chartOutput.init("Swing Heading (Rad)", -3.14159f, 3.14159f) // -PI to PI
+
+            pdrEngine?.listener = object : HybridPdrEngine.PdrListener {
+                override fun onRawData(ax: Float, ay: Float, az: Float) {
+                    runOnUiThread {
+                        binding.chartInput.addPoint("Ax", android.graphics.Color.RED, ax)
+                        binding.chartInput.addPoint("Ay", android.graphics.Color.GREEN, ay)
+                        binding.chartInput.addPoint("Az", android.graphics.Color.BLUE, az)
+                    }
+                }
+
+                override fun onPositionUpdated(x: Double, y: Double, latLng: LatLng, stepCount: Int, headingDeg: Int, stepLength: Double, source: String) {
+                    runOnUiThread {
+                        visualizer.updatePosition(latLng)
+                        binding.trajectoryView.addPoint(x, y)
+
+                        binding.tvDebugInfo.text = "[$source] Steps: $stepCount | Heading: $headingDeg° | X: ${"%.1f".format(x)} Y: ${"%.1f".format(y)}"
+
+                        pdrLog.add("${System.currentTimeMillis()},$stepCount,$headingDeg,$x,$y,${"%.2f".format(stepLength)},$source")
+                    }
+                }
+
+                override fun onDebugMessage(msg: String) {
+                    runOnUiThread {
+                        if (msg.startsWith("SWING_PLANE")) {
+                            // Format: SWING_PLANE,nx,ny,nz,hx,hy,hz,quality
+                            val parts = msg.split(",")
+                            if (parts.size >= 8) {
+                                val quality = parts[7].toFloat()
+                                val hx = parts[4].toFloat()
+                                val hy = parts[5].toFloat()
+
+                                // Plot 2: Confidence
+                                binding.chartConfidence.addPoint("Score", android.graphics.Color.GREEN, quality)
+                                binding.chartConfidence.addPoint("Threshold", android.graphics.Color.RED, 4.0f) // Ref line
+
+                                // Plot 3: Heading (Just X component for now or Atan2)
+                                // Let's plot the computed Heading Angle (Rad)
+                                val headingRad = Math.atan2(hy.toDouble(), hx.toDouble()).toFloat()
+                                binding.chartOutput.addPoint("SwingHeading", android.graphics.Color.CYAN, headingRad)
+
+                                // Update Text
+                                binding.tvDebugInfo.text = "Swing Score: %.1f\nHeading: %.2f".format(quality, headingRad)
+                                if (quality > 4.0f) binding.tvDebugInfo.setBackgroundColor(0xAA00AA00.toInt())
+                                else binding.tvDebugInfo.setBackgroundColor(0xAA550000.toInt())
+                            }
+                        } else {
+                             Log.d(TAG, msg)
+                        }
+                    }
+                }
+            }
+
+            pdrEngine?.start(START_LAT_LNG)
+        }
+    }
     // ...
 
     private fun initMap() {

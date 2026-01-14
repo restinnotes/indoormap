@@ -36,6 +36,13 @@ class SimpleLineChart @JvmOverloads constructor(
     var yMax = 20f
     var autoScale = false
 
+    fun init(title: String, min: Float, max: Float) {
+        this.yMin = min
+        this.yMax = max
+        // title is unused for now
+        invalidate()
+    }
+
     fun addPoint(seriesName: String, color: Int, value: Float) {
         if (!lines.containsKey(seriesName)) {
             lines[seriesName] = mutableListOf()

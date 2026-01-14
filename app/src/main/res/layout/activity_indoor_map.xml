@@ -74,7 +74,7 @@
 
         <!-- Chart 3: Heading Output -->
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                  android:text="Heading (Rad) & Status" android:textColor="#00FFFF"/>
+                  android:text="Heading (Rad) &amp; Status" android:textColor="#00FFFF"/>
         <com.example.indoorpdr.SimpleLineChart
             android:id="@+id/chart_output"
             android:layout_width="match_parent"
@@ -97,6 +97,15 @@
             android:layout_weight="1"
             android:layout_marginEnd="8dp"
             android:text="Reset" />
+
+        <Button
+            android:id="@+id/btn_toggle_source"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1.2"
+            android:layout_marginEnd="8dp"
+            android:textSize="12sp"
+            android:text="Source: SCS" />
 
         <Button
             android:id="@+id/btn_save"
